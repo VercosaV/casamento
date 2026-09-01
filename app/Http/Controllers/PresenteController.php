@@ -1,0 +1,122 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Presente;
+use Illuminate\Http\Request;
+
+class PresenteController extends Controller
+{
+      /**
+     * Display a listing of the resource.
+     *
+     * responsável por trazer todos 
+     * os dados, a lista
+     * relacionada a tabela que
+     * vamos traabalhar
+     * vamos chamar a página
+     * que vai ter todos
+     * os registros de categoria
+     * 
+     */ 
+    public function index()
+    {
+        $presentes = Presente::all();
+        return view('presentes.index', compact('presentes'));    
+
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     * 
+     *  responsável por chamar o form
+     * que vai possibilitar criar 
+     * um novo registro na tabela
+     */
+    public function create()
+    {
+        return view('presentes.create');
+
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     * 
+     * a diferença é que o create eu vou chamar
+     * o formulário para eu poder inserir os dados
+     * e criar o registro
+     * 
+     * 
+     * o store vou receber esses dados e vou 
+     * armazenar no banco de dados
+     */
+    public function store(Request $request)
+    {
+        if( Presente::create($request->all()))
+            {
+                return redirect()->route('presentes.index')->with('mensagem', 'Presente criado com sucesso!');
+            } else {
+                return redirect()->route('presentes.index')->with('mensagem', 'Erro ao inserir o Presente!');
+            }
+    }
+
+    /**
+     * Display the specified resource.
+     * 
+     * esse método vai ser responsável por chanar
+     * uma view passae os dados para essa view
+     * para mostrar os dados de um registro espe
+     * cífico
+     */
+    public function show(String $id)
+    {
+        $presentes = Presente::findOrFail($id);
+        return view('presentes.show', compact('Presente'));
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     * 
+     * vai chamar um formulario para eu poder
+     * editar um registro em específico
+     * 
+    */
+    public function edit(String $id)
+    {
+        $presentes = Presente::findOrFail($id);
+        return view('presentes.edit', compact('Presente'));
+    }
+
+    /**
+     * Update the specified resource in storage.
+     * 
+     * receber os dados que foram editados e
+     * fazer a alteração
+     */
+    public function update(Request $request, String $id)
+    {
+        $presentes = Presente::findOrFail($id);
+        if($presentes->update($request->all())){
+            return redirect()->route('presentes.index')->with('mensagem', 'Presente alterado!');
+        } else {
+            return redirect()->route('presentes.index')->with('mensagem', 'Erro ao alterar!');
+        }
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     * 
+     * vai receber um id por parametro
+     * e vai excluir do banco de dados
+     * 
+     */
+    public function destroy(String $id)
+    {
+        $presentes = Presente::findOrFail($id);
+        if($presentes->delete()) {
+            return redirect()->route('presentes.index')->with('mensagem', 'Presente excluído!');
+        } else {
+            return redirect()->route('presentes.index')->with('mensagem', 'Erro ao excluir!');
+        }
+    }
+}
