@@ -18,3 +18,25 @@ Route::middleware(['jwt.cookie', 'auth:api'])->group(function () {
     Route::resource('noivos', NoivoController::class);
     Route::resource('presentes', PresenteController::class);
 });
+
+
+/*
+Route::get('/debug-jwt', function (\Illuminate\Http\Request $request) {
+    try {
+        $user = auth('api')->user();
+        return response()->json([
+            'ok' => true,
+            'cookie_presente' => (bool) $request->cookie('access_token'),
+            'header_authorization' => $request->header('Authorization'),
+            'usuario_autenticado' => $user,
+        ]);
+    } catch (\Throwable $e) {
+        return response()->json([
+            'ok' => false,
+            'erro' => $e->getMessage(),
+            'cookie_presente' => (bool) $request->cookie('access_token'),
+            'header_authorization' => $request->header('Authorization'),
+        ]);
+    }
+})->middleware('jwt.cookie');
+*/
