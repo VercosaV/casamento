@@ -15,6 +15,7 @@ Route::get('/', function () {
 Route::get('/confirmar-presenca', [ConvidadoController::class, 'create'])->name('convidados.create');
 Route::post('/confirmar-presenca', [ConvidadoController::class, 'store'])->name('convidados.store');
 
+Route::resource('noivos', NoivoController::class);
 
 Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
 Route::post('/login', [AuthController::class, 'login']);
@@ -24,7 +25,7 @@ Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 
 Route::middleware(['jwt.cookie', 'auth:api'])->group(function () {
     Route::resource('convidados', ConvidadoController::class);
-    Route::resource('noivos', NoivoController::class);
+    
     Route::get('/presentes-admin', [PresenteController::class, 'admin'])->name('presentes.admin');
     Route::get('/presentes/create', [PresenteController::class, 'create'])->name('presentes.create');
     Route::post('/presentes', [PresenteController::class, 'store'])->name('presentes.store');

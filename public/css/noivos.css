@@ -1,0 +1,124 @@
+* {
+    font-family: "Lato", sans-serif;
+
+}
+
+.container {
+    max-width: 100%;
+    margin: 0;
+}
+
+.container-header {
+    text-align: center;
+    padding: 20px;
+}
+
+
+.container-header a {
+    color: #000;
+    text-decoration: none;
+    padding: 20px;
+    text-transform: uppercase;
+    line-height: normal;
+    padding: 8px 16px;
+    font-weight: 500;
+    font-size: 16px;
+    border-radius: 8px;
+    transition: all 0.2s ease-in-out;
+}
+
+.container-header a:hover {
+    color: #ffffff;
+    background-color: #CA9E67;
+    border-radius: 8px;
+    padding: 8px 16px;
+
+}
+
+.container-header a:active {
+    border: black 2px solid;
+    border-radius: 8px;
+
+}
+
+.container-main {
+    text-align: center;
+    margin-top: 80px;
+    text-transform: uppercase;
+    font-size: 48px;
+}
+
+.container-data {
+    text-align: center;
+    margin-top: 30px;
+    font-size: 24px;
+    color: #555;
+    text-transform: uppercase;
+}
+
+.hr-bdata {
+    border: none;
+    border-top: 1px solid #9A6A38;
+
+    margin: 30px auto;
+    max-width: 200px;
+
+}
+
+.container-contagem {
+    background-color: #CA9E67;
+    padding: 20px;
+    text-align: center;
+    margin-top: 200px;
+}
+
+.container-contagem h3 {
+    color: #fff;
+    font-size: 36px;
+    margin-bottom: 20px;
+    text-transform: uppercase;
+    font-weight: 400;
+    letter-spacing: 3px;
+    margin-bottom: 40px;
+}
+
+/* O grid principal que você viu no inspetor */
+.countdown-content {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr); /* 4 colunas de tamanhos iguais */
+  gap: 20px;
+  max-width: 600px;
+  margin: 0 auto; /* Centraliza a caixa na tela */
+}
+
+/* As caixinhas brancas */
+.item {
+  background-color: #ffffff;
+  color: #b58253; /* Cor do texto dentro das caixas */
+  border-radius: 8px;
+  padding: 20px 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+.number {
+  font-size: 2.8rem;
+  font-weight: normal;
+  line-height: 1;
+}
+
+.label {
+  font-size: 0.8rem;
+  margin-top: 10px;
+  letter-spacing: 1px;
+}
+
+/* Para telas de celular, quebra para 2 colunas */
+@media (max-width: 500px) {
+  .countdown-content {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
