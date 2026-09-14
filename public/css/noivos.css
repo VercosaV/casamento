@@ -79,7 +79,8 @@
     text-transform: uppercase;
     font-weight: 400;
     letter-spacing: 3px;
-    margin-bottom: 40px;
+    padding-top: 40px;
+    padding-bottom: 40px;
 }
 
 /* O grid principal que você viu no inspetor */
@@ -87,8 +88,9 @@
   display: grid;
   grid-template-columns: repeat(4, 1fr); /* 4 colunas de tamanhos iguais */
   gap: 20px;
-  max-width: 600px;
+  max-width: 500px;
   margin: 0 auto; /* Centraliza a caixa na tela */
+  padding-bottom: 60px;
 }
 
 /* As caixinhas brancas */

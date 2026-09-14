@@ -71,7 +71,7 @@ class NoivoController extends Controller
     public function show(String $id)
     {
         $noivos = Noivo::findOrFail($id);
-        return view('noivos.show', compact('noivo'));
+        return view('noivos.show', compact('noivos'));
     }
 
     /**
@@ -84,7 +84,7 @@ class NoivoController extends Controller
     public function edit(String $id)
     {
         $noivos = Noivo::findOrFail($id);
-        return view('noivos.edit', compact('noivo'));
+        return view('noivos.edit', compact('noivos'));
     }
 
     /**
