@@ -14,7 +14,7 @@
             <div class="alert alert-danger">{{ $errors->first() }}</div>
         @endif
 
-        <form method="POST" action="{{ route('convidados.store') }}">
+        <form method="POST" action="{{ route('rsvp.store') }}">
             @csrf
             <div class="mb-3">
                 <label for="nome" class="form-label">Seu nome</label>
