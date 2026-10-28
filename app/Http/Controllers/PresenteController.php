@@ -12,6 +12,7 @@ class PresenteController extends Controller
     public function index()
     {
         $presentes = Presente::all();
+
         return view('presentes.index', compact('presentes'));
     }
 
@@ -19,6 +20,7 @@ class PresenteController extends Controller
     public function admin()
     {
         $presentes = Presente::all();
+
         return view('presentes.admin', compact('presentes'));
     }
 
@@ -29,23 +31,33 @@ class PresenteController extends Controller
 
     public function store(Request $request)
     {
-        if (Presente::create($request->all())) {
-            return redirect()->route('presentes.admin')->with('mensagem', 'Presente criado com sucesso!');
-        }
-        return redirect()->route('presentes.admin')->with('mensagem', 'Erro ao inserir o Presente!');
+        Presente::create($this->validar($request));
+
+        return redirect()->route('presentes.admin')->with('mensagem', 'Presente criado com sucesso!');
     }
 
     public function show(string $id)
     {
         $presente = Presente::findOrFail($id);
+
         return view('presentes.show', compact('presente'));
     }
 
-    // Um convidado escolhe esse presente pra comprar
+    private function validar(Request $request): array
+    {
+        return $request->validate([
+            'nome' => ['required', 'string', 'max:255'],
+            'descricao' => ['nullable', 'string', 'max:1000'],
+            'valor' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+            'link' => ['nullable', 'url', 'max:255'],
+        ]);
+    }
+
     public function reservar(Request $request, string $id)
     {
         $presente = Presente::findOrFail($id);
 
+        // Atalho amigável. A proteção de verdade é o UPDATE condicional mais abaixo.
         if ($presente->comprado) {
             return redirect()
                 ->route('presentes.index')
@@ -70,10 +82,19 @@ class PresenteController extends Controller
             session(['convidado_id' => $convidadoId]);
         }
 
-        $presente->update([
-            'comprado' => true,
-            'convidado_id' => $convidadoId,
-        ]);
+        // Checagem + gravação em uma única instrução SQL
+        $reservou = Presente::where('id', $presente->id)
+            ->where('comprado', false)
+            ->update([
+                'comprado' => true,
+                'convidado_id' => $convidadoId,
+            ]);
+
+        if ($reservou === 0) {
+            return redirect()
+                ->route('presentes.index')
+                ->with('mensagem', 'Esse presente acabou de ser escolhido por outra pessoa.');
+        }
 
         return redirect()
             ->route('presentes.index')
@@ -83,6 +104,7 @@ class PresenteController extends Controller
     public function edit(string $id)
     {
         $presente = Presente::findOrFail($id);
+
         return view('presentes.edit', compact('presente'));
     }
 
@@ -92,6 +114,7 @@ class PresenteController extends Controller
         if ($presente->update($request->all())) {
             return redirect()->route('presentes.admin')->with('mensagem', 'Presente alterado!');
         }
+
         return redirect()->route('presentes.admin')->with('mensagem', 'Erro ao alterar!');
     }
 
@@ -101,19 +124,10 @@ class PresenteController extends Controller
         if ($presente->delete()) {
             return redirect()->route('presentes.admin')->with('mensagem', 'Presente excluído!');
         }
+
         return redirect()->route('presentes.admin')->with('mensagem', 'Erro ao excluir!');
     }
 }
-
-
-
-
-
-
-
-
-
-
 
 /*
 namespace App\Http\Controllers;
@@ -126,29 +140,29 @@ class PresenteController extends Controller
       /**
      * Display a listing of the resource.
      *
-     * responsável por trazer todos 
+     * responsável por trazer todos
      * os dados, a lista
      * relacionada a tabela que
      * vamos traabalhar
      * vamos chamar a página
      * que vai ter todos
      * os registros de categoria
-     * 
-      
+     *
+
     public function index()
     {
         $presentes = Presente::all();
-        return view('presentes.index', compact('presentes'));    
+        return view('presentes.index', compact('presentes'));
 
     }
 
     /**
      * Show the form for creating a new resource.
-     * 
+     *
      *  responsável por chamar o form
-     * que vai possibilitar criar 
+     * que vai possibilitar criar
      * um novo registro na tabela
-     
+
     public function create()
     {
         return view('presentes.create');
@@ -157,15 +171,15 @@ class PresenteController extends Controller
 
     /**
      * Store a newly created resource in storage.
-     * 
+     *
      * a diferença é que o create eu vou chamar
      * o formulário para eu poder inserir os dados
      * e criar o registro
-     * 
-     * 
-     * o store vou receber esses dados e vou 
+     *
+     *
+     * o store vou receber esses dados e vou
      * armazenar no banco de dados
-     
+
     public function store(Request $request)
     {
         if( Presente::create($request->all()))
@@ -178,12 +192,12 @@ class PresenteController extends Controller
 
     /**
      * Display the specified resource.
-     * 
+     *
      * esse método vai ser responsável por chanar
      * uma view passae os dados para essa view
      * para mostrar os dados de um registro espe
      * cífico
-     
+
     public function show(String $id)
     {
         $presentes = Presente::findOrFail($id);
@@ -192,11 +206,11 @@ class PresenteController extends Controller
 
     /**
      * Show the form for editing the specified resource.
-     * 
+     *
      * vai chamar um formulario para eu poder
      * editar um registro em específico
-     * 
-    
+     *
+
     public function edit(String $id)
     {
         $presentes = Presente::findOrFail($id);
@@ -205,10 +219,10 @@ class PresenteController extends Controller
 
     /**
      * Update the specified resource in storage.
-     * 
+     *
      * receber os dados que foram editados e
      * fazer a alteração
-     
+
     public function update(Request $request, String $id)
     {
         $presentes = Presente::findOrFail($id);
@@ -221,11 +235,11 @@ class PresenteController extends Controller
 
     /**
      * Remove the specified resource from storage.
-     * 
+     *
      * vai receber um id por parametro
      * e vai excluir do banco de dados
-     * 
-     
+     *
+
     public function destroy(String $id)
     {
         $presentes = Presente::findOrFail($id);
