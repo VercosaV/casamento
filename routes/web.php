@@ -8,12 +8,8 @@ use Illuminate\Support\Facades\Route;
 
 // ---------- Público (qualquer visitante, sem login) ----------
 
-Route::get('/', function () {
-    return view('welcome');
-});
+Route::view('/', 'home')->name('home');
 
-// Home do casal (contagem regressiva): só a listagem é pública
-Route::get('/noivos', [NoivoController::class, 'index'])->name('noivos.index');
 
 // RSVP com nomes próprios (rsvp.*) para não colidir com convidados.* do painel
 Route::get('/confirmar-presenca', [ConvidadoController::class, 'create'])->name('rsvp.create');
