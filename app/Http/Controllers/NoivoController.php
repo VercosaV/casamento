@@ -9,9 +9,8 @@ use Illuminate\Validation\Rule;
 class NoivoController extends Controller
 {
     // Home pública do casal
-    public function home()
+    public function index()
     {
-        // AuthController::login, no return:
         return redirect()
             ->route('convidados.index')
             ->withCookie(cookie('access_token', $token, Auth::guard('api')->factory()->getTTL()));
@@ -32,6 +31,6 @@ class NoivoController extends Controller
 
         $noivo->update($dados);
 
-        return redirect()->route('noivos.index')->with('mensagem', 'Noivo alterado!');
+        return redirect()->route('home')->with('mensagem', 'Noivo alterado!');
     }
 }

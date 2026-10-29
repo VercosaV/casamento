@@ -26,7 +26,7 @@ class AuthController extends Controller
         }
 
         return redirect()
-            ->route('noivos.index')
+            ->route('home')
             ->withCookie(cookie('access_token', $token, Auth::guard('api')->factory()->getTTL()));
     }
 

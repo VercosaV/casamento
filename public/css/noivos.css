@@ -124,3 +124,11 @@
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+html { scroll-behavior: smooth; }
+
+body { padding-top: 64px; } /* espaço para a navbar fixa */
+
+section[id] { scroll-margin-top: 72px; } /* a âncora não fica escondida atrás da navbar */
+
+.amp { color: #CA9E67; }
