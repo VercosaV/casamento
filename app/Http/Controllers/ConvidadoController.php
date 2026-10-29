@@ -11,7 +11,7 @@ class ConvidadoController extends Controller
 {
     public function index()
     {
-        $convidados = Convidado::all();
+        $convidados = Convidado::orderBy('nome')->get();
         return view('convidados.index', compact('convidados'));
     }
 
@@ -22,28 +22,9 @@ class ConvidadoController extends Controller
 
     public function store(Request $request)
     {
-        $dados = $request->validate([
-            'nome' => 'required|string|max:255',
-            'telefone' => 'nullable|string|max:20',
-            'cpf' => 'required|string|max:14|unique:convidados,cpf',
-            'email' => 'nullable|email|max:255',
-        ]);
+        Convidado::create($this->validar($request));
 
-        $dados['confirma_presenca'] = true;
-
-        $convidado = Convidado::create($dados);
-
-        session(['convidado_id' => $convidado->id]);
-
-        // Se quem preencheu foi um dos noivos logados, volta pro painel;
-        // se foi um convidado comum, segue pra tela pública de presentes.
-        if (Auth::guard('api')->check()) {
-            return redirect()->route('convidados.index')->with('mensagem', 'Convidado criado com sucesso!');
-        }
-
-        return redirect()
-            ->route('presentes.index')
-            ->with('mensagem', 'Presença confirmada! Obrigado, '.$convidado->nome.'.');
+        return redirect()->route('convidados.index')->with('mensagem', 'Convidado criado com sucesso!');
     }
 
     public function show(string $id)
@@ -61,20 +42,32 @@ class ConvidadoController extends Controller
     public function update(Request $request, string $id)
     {
         $convidado = Convidado::findOrFail($id);
-        if ($convidado->update($request->all())) {
-            return redirect()->route('convidados.index')->with('mensagem', 'Convidado alterado!');
-        }
-        return redirect()->route('convidados.index')->with('mensagem', 'Erro ao alterar!');
+        $convidado->update($this->validar($request, $convidado));
+
+        return redirect()->route('convidados.index')->with('mensagem', 'Convidado alterado!');
     }
 
     public function destroy(string $id)
     {
-        $convidado = Convidado::findOrFail($id);
-        if ($convidado->delete()) {
-            return redirect()->route('convidados.index')->with('mensagem', 'Convidado(a) excluído(a)!');
-        }
-        return redirect()->route('convidados.index')->with('mensagem', 'Erro ao excluir!');
+        Convidado::findOrFail($id)->delete();
+
+        return redirect()->route('convidados.index')->with('mensagem', 'Convidado excluído!');
     }
+
+    // Regras compartilhadas por criar e editar. $convidado só existe na edição.
+    private function validar(Request $request, ?Convidado $convidado = null): array
+    {
+        return $request->validate([
+            'nome'              => ['required', 'string', 'max:255'],
+            'email'             => ['nullable', 'email', 'max:255', Rule::unique('convidados', 'email')->ignore($convidado?->id)],
+            'telefone'          => ['nullable', 'string', 'max:20'],
+            'confirma_presenca' => ['required', 'boolean'],
+            'adultos'           => ['required', 'integer', 'min:0', 'max:10'],
+            'criancas'          => ['required', 'integer', 'min:0', 'max:10'],
+            'observacoes'       => ['nullable', 'string', 'max:500'],
+        ]);
+    }
+
 }
 
 

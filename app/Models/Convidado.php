@@ -6,15 +6,21 @@ use Illuminate\Database\Eloquent\Model;
 
 class Convidado extends Model
 {
-
-    protected $table = 'convidados';
-    
-    public $incrementing = true;
-
     protected $fillable = [
-        'nome', 'telefone', 'cpf',
+        'nome',
+        'telefone',
+        'cpf',            // mantenha até o passo 2.6 e depois remova da lista
+        'email',
         'confirma_presenca',
-        'email'
+        'adultos',
+        'criancas',
+        'observacoes',
     ];
 
+    protected function casts(): array
+    {
+        return [
+            'confirma_presenca' => 'boolean',
+        ];
+    }
 }

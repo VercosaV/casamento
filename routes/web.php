@@ -5,11 +5,14 @@ use App\Http\Controllers\ConvidadoController;
 use App\Http\Controllers\NoivoController;
 use App\Http\Controllers\PresenteController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\RsvpController;
 
 // ---------- Público (qualquer visitante, sem login) ----------
 
 Route::view('/', 'home')->name('home');
 
+Route::get('/confirmar-presenca', [RsvpController::class, 'create'])->name('rsvp.create');
+Route::post('/confirmar-presenca', [RsvpController::class, 'store'])->name('rsvp.store');
 
 // RSVP com nomes próprios (rsvp.*) para não colidir com convidados.* do painel
 Route::get('/confirmar-presenca', [ConvidadoController::class, 'create'])->name('rsvp.create');
