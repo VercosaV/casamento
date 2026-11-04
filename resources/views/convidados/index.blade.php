@@ -19,16 +19,22 @@
               <tr>
                 <th>ID</th>
                 <th>Nome</th>
-                <th>Descrição</th>
-                <th>Ações</th>
+                <th>Email</th>
+                <th>Telefone</th>
+                <th>Confirma Presença</th>
+                <th>Adultos</th>
+                <th>Crianças</th>
               </tr>
             </thead>
             <tbody>
               @foreach($convidados as $convidado)
                 <tr>
-                    <td>{{ $convidado->id }}</td>
                     <td>{{ $convidado->nome }}</td>
-                    <td>{{ $convidado->descricao }}</td>
+                    <td>{{ $convidado->email }}</td>
+                    <td>{{ $convidado->telefone }}</td>
+                    <td>{{ $convidado->confirma_presenca }}</td>
+                    <td>{{ $convidado->adultos }}</td>
+                    <td>{{ $convidado->criancas }}</td>
                     <td class="d-flex gap-2">
                         <a href="/convidados/{{ $convidado->id }}/edit" class="btn btn-sm btn-warning">Editar</a>
                         <a href="/convidados/{{ $convidado->id }}" class="btn btn-sm btn-info">Consultar</a>

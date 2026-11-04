@@ -8,8 +8,7 @@ class Convidado extends Model
 {
     protected $fillable = [
         'nome',
-        'telefone',
-        'cpf',            // mantenha até o passo 2.6 e depois remova da lista
+        'telefone',        // mantenha até o passo 2.6 e depois remova da lista
         'email',
         'confirma_presenca',
         'adultos',

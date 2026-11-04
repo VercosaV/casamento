@@ -30,8 +30,7 @@
 
                                 @unless (session('convidado_id'))
                                     <input type="text" name="nome" class="form-control mb-2" placeholder="Seu nome" required>
-                                    <input type="text" name="cpf" class="form-control mb-2" placeholder="Seu CPF" required>
-                                    <input type="email" name="email" class="form-control mb-2" placeholder="Seu e-mail (opcional)">
+                                    <input type="email" name="email" class="form-control mb-2" placeholder="Seu e-mail" required>
                                 @endunless
 
                                 <button type="submit" class="btn btn-primary btn-sm">Escolher este presente</button>
