@@ -15,7 +15,8 @@
 
     if (falta <= 0) {
       clearInterval(timer);
-      el.innerHTML = '<h2>Chegou o grande dia!</h2>';
+      el.className = 'contagem-fim';
+      el.textContent = 'Chegou o grande dia!';
       return;
     }
 

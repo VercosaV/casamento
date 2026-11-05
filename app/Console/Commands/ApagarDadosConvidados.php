@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class ApagarDadosConvidados extends Command
 {
@@ -20,7 +21,11 @@ class ApagarDadosConvidados extends Command
 
         DB::transaction(function () {
             DB::table('contribuicoes')->delete();
-            DB::table('recados')->delete();
+            // A tabela recados só existe se você fez o mural (passo 6.1).
+            if (Schema::hasTable('recados')) {
+                DB::table('recados')->delete();
+            }
+
             DB::table('convidados')->delete();
         });
 

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Convidado;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ConvidadoController extends Controller
@@ -75,7 +76,7 @@ class ConvidadoController extends Controller
     // Regras compartilhadas por criar e editar. $convidado só existe na edição.
     private function validar(Request $request, ?Convidado $convidado = null): array
     {
-        return $request->validate([
+        $dados = $request->validate([
             'nome' => ['required', 'string', 'max:255'],
             'email' => ['nullable', 'email', 'max:255', Rule::unique('convidados', 'email')->ignore($convidado?->id)],
             'telefone' => ['nullable', 'string', 'max:20'],
@@ -85,7 +86,7 @@ class ConvidadoController extends Controller
             'observacoes' => ['nullable', 'string', 'max:500'],
         ]);
 
-        // Quem não vai não ocupa lugar. Isso mantém "adultos = 0" como marca de recusa.
+        // Quem não vai não ocupa lugar. O return acima impedia este bloco de rodar.
         if ($request->input('confirma_presenca') === '0') {
             $dados['adultos'] = 0;
             $dados['criancas'] = 0;

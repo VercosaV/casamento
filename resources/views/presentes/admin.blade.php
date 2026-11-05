@@ -1,9 +1,9 @@
-@extends('layouts.app')
+@extends('layouts.admin')
 
 @section('title', 'Gerenciar presentes')
 
 @section('content')
-<div class="container py-5">
+<div class="py-2">
     <h1 class="mb-3">Gerenciar presentes</h1>
     <a href="{{ route('presentes.create') }}" class="btn btn-success mb-3">Novo presente</a>
 

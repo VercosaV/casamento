@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.admin')
 
 @section('title', 'Painel dos noivos')
 
@@ -17,19 +17,12 @@
         ['Valor reservado', 'R$ ' . number_format($stats['valor'], 2, ',', '.')],
     ];
 @endphp
-<div class="container py-5">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="mb-0">Painel dos noivos</h1>
-        <form method="POST" action="{{ route('logout') }}">
-            @csrf
-            <button type="submit" class="btn btn-outline-secondary btn-sm">Sair</button>
-        </form>
-    </div>
+<div class="py-2">
+    <h1 class="mb-4">Visão geral</h1>
 
     <div class="d-flex flex-wrap gap-2 mb-4">
-        <a href="{{ route('convidados.index') }}" class="btn btn-dark">Convidados</a>
-        <a href="{{ route('presentes.admin') }}" class="btn btn-dark">Presentes</a>
-        <a href="{{ route('contribuicoes.index') }}" class="btn btn-dark">Quem presenteou</a>
+        <a href="{{ route('secoes.index') }}" class="btn btn-ouro">Editar página do convite</a>
+        <a href="{{ route('presentes.create') }}" class="btn btn-dark">Novo presente</a>
         <a href="{{ route('convidados.exportar') }}" class="btn btn-outline-dark">Exportar convidados (CSV)</a>
     </div>
 

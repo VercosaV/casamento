@@ -56,4 +56,20 @@ class RsvpTest extends TestCase
 
         $this->assertDatabaseCount('convidados', 0);
     }
+
+    public function test_pagina_publica_mostra_o_formulario_de_rsvp(): void
+    {
+        // Bug antigo: esta rota mostrava o formulário DOS NOIVOS (sem consentimento).
+        $this->get(route('rsvp.create'))
+            ->assertOk()
+            ->assertSee('name="consentimento"', false)
+            ->assertSee('name="confirma_presenca"', false)
+            ->assertDontSee('Novo convidado');
+    }
+
+    public function test_exige_nome_e_email(): void
+    {
+        $this->post(route('rsvp.store'), $this->dados(['nome' => '', 'email' => '']))
+            ->assertSessionHasErrors(['nome', 'email']);
+    }
 }

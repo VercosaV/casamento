@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\ApenasNoivos;
 use App\Http\Middleware\JwtFromCookie;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -15,6 +16,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'jwt.cookie' => JwtFromCookie::class,
+            'noivo' => ApenasNoivos::class,
         ]);
 
         $middleware->priority([

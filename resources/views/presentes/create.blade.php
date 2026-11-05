@@ -1,28 +1,14 @@
-<!doctype html>
-<html lang="pt-BR">
+@extends('layouts.admin')
 
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Novo Presente</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
+@section('title', 'Novo presente')
 
-<body>
-    <div class="container py-3">
-        <h1>Novo Presente</h1>
-        <form method="post" action='/presentes'
-        enctype="multipart/form-data">
-        @CSRF
-        @method('PUT')
+@section('content')
+<div style="max-width: 680px;">
+    <h1 class="mb-4">Novo presente</h1>
+    {{-- Antes havia @method('PUT') aqui: a rota de criar é POST, então dava erro 405. --}}
+    <form method="POST" action="{{ route('presentes.store') }}" enctype="multipart/form-data" class="card card-body">
+        @csrf
         @include('presentes._form')
-        
-        
-        </form>
-        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/js/bootstrap.bundle.min.js"
-            integrity="sha384-j1CDi7MgGQ12Z7Qab0qlWQ/Qqz24Gc6BM0thvEMVjHnfYGF0rmFCozFSxQBxwHKO" crossorigin="anonymous">
-        </script>
-    </div>
-</body>
-
-</html>
+    </form>
+</div>
+@endsection

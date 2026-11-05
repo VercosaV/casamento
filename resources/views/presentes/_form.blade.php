@@ -47,4 +47,4 @@
         <img src="{{ $presente->imagem_url }}" alt="Imagem atual" class="img-thumbnail mt-2" style="max-width: 160px;">
     @endif
 </div>
-<button type="submit" class="btn btn-primary">Salvar</button>
+<button type="submit" class="btn btn-ouro">Salvar</button>

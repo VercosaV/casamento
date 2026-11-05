@@ -38,7 +38,7 @@ class PresenteController extends Controller
             default       => $query->orderBy('nome'),
         };
 
-        $presentes  = $query->get();
+        $presentes  = $query->paginate(9)->withQueryString();
         $categorias = Presente::whereNotNull('categoria')->distinct()->orderBy('categoria')->pluck('categoria');
 
         return view('presentes.index', compact('presentes', 'categorias', 'ordem', 'categoria', 'disponiveis'));

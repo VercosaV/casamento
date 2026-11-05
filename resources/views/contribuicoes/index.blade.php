@@ -1,9 +1,9 @@
-@extends('layouts.app')
+@extends('layouts.admin')
 
 @section('title', 'Quem presenteou')
 
 @section('content')
-<div class="container py-5">
+<div class="py-2">
     <h1 class="mb-3">Quem presenteou</h1>
 
     <table class="table table-striped align-middle">

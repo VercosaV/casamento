@@ -2,13 +2,13 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Convidado;
-use Illuminate\Http\Request;
 use App\Http\Requests\RsvpRequest;
-
+use App\Models\Convidado;
 
 class RsvpController extends Controller
 {
+    // Formulário PÚBLICO de presença. (Antes a rota apontava para o
+    // ConvidadoController, que é o formulário dos noivos.)
     public function create()
     {
         return view('rsvp.create');
@@ -16,21 +16,9 @@ class RsvpController extends Controller
 
     public function store(RsvpRequest $request)
     {
-        $dados = $request->validated([
-            'nome'              => ['required', 'string', 'max:255'],
-            'confirma_presenca' => ['required', 'boolean'],
-            'adultos'           => ['nullable', 'integer', 'min:1', 'max:10'],
-            'criancas'          => ['nullable', 'integer', 'min:0', 'max:10'],
-            'email'             => ['required', 'email', 'max:255'],
-            'telefone'          => ['nullable', 'string', 'max:20'],
-            'observacoes'       => ['nullable', 'string', 'max:500'],
-            'consentimento'     => ['accepted'],
-        ], [
-            'nome.required'          => 'Informe seu nome completo.',
-            'email.required'         => 'Informe seu e-mail.',
-            'email.email'            => 'Esse e-mail não parece válido.',
-            'consentimento.accepted' => 'Para continuar, aceite o uso dos seus dados.',
-        ]);
+        // validated() SEM argumentos devolve só os campos que passaram
+        // pelas regras do RsvpRequest. As regras e mensagens ficam lá.
+        $dados = $request->validated();
 
         $vai = $request->boolean('confirma_presenca');
 
@@ -56,6 +44,6 @@ class RsvpController extends Controller
 
         return redirect()
             ->route('presentes.index')
-            ->with('mensagem', 'Presença confirmada! Obrigado, ' . $convidado->nome . '.');
+            ->with('mensagem', 'Presença confirmada! Obrigado, '.$convidado->nome.'.');
     }
 }

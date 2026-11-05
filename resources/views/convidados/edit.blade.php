@@ -1,8 +1,8 @@
 {{-- resources/views/convidados/edit.blade.php --}}
-@extends('layouts.app')
+@extends('layouts.admin')
 @section('title', 'Editar convidado')
 @section('content')
-<div class="container py-5" style="max-width: 640px;">
+<div class="py-2" style="max-width: 640px;">
     <h1 class="mb-4">Editar convidado</h1>
     <form method="POST" action="{{ route('convidados.update', $convidado->id) }}">
         @csrf

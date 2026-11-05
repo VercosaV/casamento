@@ -51,4 +51,4 @@
     <label for="observacoes" class="form-label">Observações</label>
     <textarea id="observacoes" name="observacoes" class="form-control" rows="3">{{ old('observacoes', $convidado->observacoes ?? '') }}</textarea>
 </div>
-<button type="submit" class="btn btn-primary">Salvar</button>
+<button type="submit" class="btn btn-ouro">Salvar</button>

@@ -1,27 +1,14 @@
-<!doctype html>
-<html lang="pt-BR">
+@extends('layouts.admin')
 
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Editar Presente</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
+@section('title', 'Editar presente')
 
-<body>
-    <div class="container py-3">
-        <h1>Editar Presente</h1>
-        <form method="post" action='/presentes/{{ $presente->id }}'
-            enctype="multipart/form-data">
-        @CSRF
+@section('content')
+<div style="max-width: 680px;">
+    <h1 class="mb-4">Editar presente</h1>
+    <form method="POST" action="{{ route('presentes.update', $presente) }}" enctype="multipart/form-data" class="card card-body">
+        @csrf
         @method('PUT')
         @include('presentes._form')
-            
-        </form>
-        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/js/bootstrap.bundle.min.js"
-            integrity="sha384-j1CDi7MgGQ12Z7Qab0qlWQ/Qqz24Gc6BM0thvEMVjHnfYGF0rmFCozFSxQBxwHKO" crossorigin="anonymous">
-        </script>
-    </div>
-</body>
-
-</html>
+    </form>
+</div>
+@endsection

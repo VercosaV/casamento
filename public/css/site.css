@@ -1,0 +1,214 @@
+/* =========================================================
+   Convite de casamento: estilos do site
+   Organização: 1) variáveis  2) base  3) menu  4) botões
+   5) topo (hero)  6) seções  7) presentes  8) formulários
+   9) painel dos noivos
+   ========================================================= */
+
+/* ---------- 1) Variáveis: troque as cores do site aqui ---------- */
+:root {
+    --ouro: #b08550;          /* detalhes e bordas */
+    --ouro-escuro: #8c6532;   /* textos e botões (contraste ~5:1 sobre branco) */
+    --ouro-claro: #ead9bf;
+    --creme: #fbf7f1;
+    --tinta: #2b2622;
+    --cinza: #6b6259;
+    --fonte-titulo: "Cormorant Garamond", Georgia, serif;
+    --fonte-texto: "Lato", system-ui, sans-serif;
+}
+
+/* ---------- 2) Base ---------- */
+html { scroll-behavior: smooth; }
+body {
+    font-family: var(--fonte-texto);
+    color: var(--tinta);
+    padding-top: 72px; /* espaço para o menu fixo */
+}
+h1, h2, h3, h4 { font-family: var(--fonte-titulo); font-weight: 600; }
+a { color: var(--ouro-escuro); }
+section[id] { scroll-margin-top: 72px; } /* a âncora não some atrás do menu */
+:focus-visible { outline: 3px solid var(--ouro); outline-offset: 2px; }
+
+/* ---------- 3) Menu centralizado ---------- */
+.site-nav {
+    background: rgba(255, 255, 255, .94);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--ouro-claro);
+    min-height: 72px;
+}
+.site-nav .navbar-brand {
+    font-family: var(--fonte-titulo);
+    font-size: 1.7rem;
+    font-weight: 600;
+    color: var(--tinta);
+    letter-spacing: .08em;
+}
+.site-nav .nav-link {
+    color: var(--tinta);
+    text-transform: uppercase;
+    letter-spacing: .14em;
+    font-size: .8rem;
+    font-weight: 700;
+    padding: .6rem 1rem;
+    position: relative;
+}
+.site-nav .nav-link::after {            /* sublinhado dourado que cresce no hover */
+    content: "";
+    position: absolute;
+    left: 1rem; right: 1rem; bottom: .3rem;
+    height: 2px;
+    background: var(--ouro);
+    transform: scaleX(0);
+    transition: transform .25s ease;
+}
+.site-nav .nav-link:hover::after,
+.site-nav .nav-link.active::after { transform: scaleX(1); }
+
+/* Em telas grandes, os links ficam exatamente no centro do menu */
+@media (min-width: 992px) {
+    .site-nav .navbar-nav {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+    }
+}
+@media (max-width: 991.98px) {
+    .site-nav .navbar-nav { text-align: center; padding: .5rem 0 1rem; }
+}
+
+/* ---------- 4) Botões ---------- */
+.btn-ouro {
+    background: var(--ouro-escuro);
+    border: 2px solid var(--ouro-escuro);
+    color: #fff;
+    border-radius: 999px;
+    padding: .65rem 1.6rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    transition: background .2s, transform .2s;
+}
+.btn-ouro:hover { background: #6f4f26; border-color: #6f4f26; color: #fff; transform: translateY(-1px); }
+.btn-contorno {
+    background: transparent;
+    border: 2px solid var(--ouro-escuro);
+    color: var(--ouro-escuro);
+    border-radius: 999px;
+    padding: .65rem 1.6rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    transition: background .2s, color .2s;
+}
+.btn-contorno:hover { background: var(--ouro-escuro); color: #fff; }
+
+/* ---------- 5) Topo (hero) ---------- */
+.hero {
+    min-height: calc(100vh - 72px);
+    display: flex;
+    align-items: center;
+    text-align: center;
+    padding: 4rem 1rem;
+    background: radial-gradient(circle at 50% 0%, #fff 0%, var(--creme) 70%) center / cover no-repeat;
+}
+.hero-nomes {
+    font-size: clamp(3.2rem, 11vw, 7rem);
+    line-height: 1;
+    font-weight: 500;
+    margin: 0;
+}
+.amp { color: var(--ouro); font-style: italic; padding: 0 .1em; }
+.hero-data {
+    letter-spacing: .35em;
+    text-transform: uppercase;
+    font-size: .95rem;
+    font-weight: 700;
+    color: var(--cinza);
+    margin: 1.5rem 0 0;
+}
+.divisor {                               /* linha - losango - linha */
+    display: flex; align-items: center; justify-content: center;
+    gap: .8rem; margin: 1.6rem auto; max-width: 220px; color: var(--ouro);
+}
+.divisor::before, .divisor::after { content: ""; flex: 1; height: 1px; background: var(--ouro); }
+.divisor span { width: 8px; height: 8px; background: var(--ouro); transform: rotate(45deg); }
+.hero-mensagem { max-width: 620px; margin: 0 auto; font-size: 1.15rem; color: var(--cinza); line-height: 1.8; }
+
+.contagem {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    max-width: 520px;
+    margin: 2.2rem auto;
+}
+.contagem-item {
+    background: #fff;
+    border: 1px solid var(--ouro-claro);
+    border-radius: 14px;
+    padding: 1.1rem .4rem;
+    box-shadow: 0 6px 18px rgba(140, 101, 50, .08);
+}
+.contagem-item .numero { display: block; font-family: var(--fonte-titulo); font-size: 2.8rem; line-height: 1; color: var(--ouro-escuro); }
+.contagem-item .rotulo { display: block; margin-top: .5rem; font-size: .7rem; letter-spacing: .18em; color: var(--cinza); font-weight: 700; }
+@media (max-width: 480px) { .contagem { grid-template-columns: repeat(2, 1fr); } }
+.contagem-fim { font-family: var(--fonte-titulo); font-size: 2.2rem; color: var(--ouro-escuro); }
+
+/* ---------- 6) Seções ---------- */
+.secao { padding: 5rem 1rem; }
+.secao.alt { background: var(--creme); }
+.secao-miolo { max-width: 860px; margin: 0 auto; }
+.secao-titulo { text-align: center; font-size: clamp(2.2rem, 5vw, 3.2rem); margin: 0; }
+.secao-texto p { font-size: 1.1rem; line-height: 1.85; color: #46403a; }
+.secao-foto { width: 100%; border-radius: 18px; box-shadow: 0 10px 30px rgba(0, 0, 0, .12); aspect-ratio: 4 / 3; object-fit: cover; }
+.galeria .carousel-item img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 18px; }
+.galeria-vazia { border: 2px dashed var(--ouro-claro); border-radius: 18px; padding: 3rem 1rem; text-align: center; color: var(--cinza); }
+
+.rodape { background: var(--tinta); color: #d9d2c9; padding: 2.5rem 1rem; text-align: center; font-size: .9rem; }
+.rodape a { color: #fff; }
+.rodape .rodape-nomes { font-family: var(--fonte-titulo); font-size: 1.8rem; color: #fff; }
+
+/* ---------- 7) Lista de presentes ---------- */
+.pagina { padding: 3rem 0 5rem; }
+.pagina h1 { text-align: center; font-size: clamp(2.2rem, 5vw, 3.2rem); }
+.presente-card {
+    border: 1px solid #eee;
+    border-radius: 16px;
+    overflow: hidden;
+    transition: transform .2s, box-shadow .2s;
+}
+.presente-card:hover { transform: translateY(-4px); box-shadow: 0 12px 28px rgba(0, 0, 0, .1); }
+.presente-card .presente-foto { aspect-ratio: 4 / 3; object-fit: cover; width: 100%; background: var(--creme); }
+.presente-card .preco { font-family: var(--fonte-titulo); font-size: 1.6rem; color: var(--ouro-escuro); font-weight: 600; }
+.presente-card.esgotado { opacity: .65; }
+.progress { height: .6rem; background: var(--ouro-claro); }
+.progress-bar { background-color: var(--ouro); }
+.badge-categoria { background: var(--creme); color: var(--ouro-escuro); border: 1px solid var(--ouro-claro); font-weight: 700; }
+.pagination .page-link { color: var(--ouro-escuro); }
+.pagination .active .page-link { background: var(--ouro-escuro); border-color: var(--ouro-escuro); color: #fff; }
+
+/* ---------- 8) Formulários públicos ---------- */
+.cartao-form {
+    background: #fff;
+    border: 1px solid var(--ouro-claro);
+    border-radius: 18px;
+    padding: 2rem;
+    box-shadow: 0 10px 30px rgba(140, 101, 50, .08);
+}
+.form-control:focus, .form-select:focus, .form-check-input:focus {
+    border-color: var(--ouro);
+    box-shadow: 0 0 0 .2rem rgba(176, 133, 80, .25);
+}
+.form-check-input:checked { background-color: var(--ouro-escuro); border-color: var(--ouro-escuro); }
+
+/* ---------- 9) Painel dos noivos ---------- */
+.admin-body { background: #f6f3ee; padding-top: 0; }
+.admin-nav { background: var(--tinta); }
+.admin-nav .navbar-brand { font-family: var(--fonte-titulo); font-size: 1.4rem; }
+.admin-nav .nav-link { color: #d9d2c9; }
+.admin-nav .nav-link:hover, .admin-nav .nav-link.active { color: #fff; }
+.admin-nav .nav-link.active { border-bottom: 2px solid var(--ouro); }
+.admin-pagina { padding: 2rem 0 4rem; }
+.admin-pagina h1 { font-size: 2.2rem; }
+.card { border-radius: 14px; }
+.secao-item { background: #fff; border: 1px solid #e8e2d9; border-radius: 14px; padding: 1rem 1.25rem; }
+.secao-item.escondida { opacity: .6; background: #faf8f4; }
+.secao-item .ordem { font-family: var(--fonte-titulo); font-size: 1.8rem; color: var(--ouro); width: 2rem; text-align: center; }
+.foto-miniatura { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; }

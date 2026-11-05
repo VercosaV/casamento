@@ -1,9 +1,9 @@
-@extends('layouts.app')
+@extends('layouts.admin')
 
 @section('title', 'Convidados')
 
 @section('content')
-<div class="container py-5">
+<div class="py-2">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h1 class="mb-0">Convidados</h1>
         <div class="d-flex gap-2">
