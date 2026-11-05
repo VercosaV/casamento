@@ -96,4 +96,6 @@
 
     atualizar(); // estado inicial (inclusive quando a página volta com erro de validação)
 </script>
+Concordo que meus dados sejam usados para a organização do casamento, conforme a
+<a href="{{ route('privacidade') }}" target="_blank" rel="noopener">página de privacidade</a>.
 @endpush

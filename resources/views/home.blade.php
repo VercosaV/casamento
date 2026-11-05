@@ -76,6 +76,44 @@
         </div>
     </div>
 </section>
+<section id="informacoes" class="py-5 bg-light">
+    <div class="mx-auto px-3" style="max-width: 800px;">
+        <h2 class="text-center mb-4">Informações úteis</h2>
+
+        <div class="accordion" id="info-uteis">
+            <div class="accordion-item">
+                <h3 class="accordion-header">
+                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#info-local">
+                        Local e horário
+                    </button>
+                </h3>
+                <div id="info-local" class="accordion-collapse collapse show" data-bs-parent="#info-uteis">
+                    <div class="accordion-body">Endereço, link do mapa e horário de chegada.</div>
+                </div>
+            </div>
+            <div class="accordion-item">
+                <h3 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#info-traje">
+                        Traje
+                    </button>
+                </h3>
+                <div id="info-traje" class="accordion-collapse collapse" data-bs-parent="#info-uteis">
+                    <div class="accordion-body">Sugestão de traje e cores a evitar.</div>
+                </div>
+            </div>
+            <div class="accordion-item">
+                <h3 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#info-hospedagem">
+                        Hospedagem e estacionamento
+                    </button>
+                </h3>
+                <div id="info-hospedagem" class="accordion-collapse collapse" data-bs-parent="#info-uteis">
+                    <div class="accordion-body">Hotéis próximos, estacionamento e transporte.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
 @endsection
 
 @push('scripts')

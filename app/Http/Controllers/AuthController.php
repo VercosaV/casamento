@@ -26,8 +26,8 @@ class AuthController extends Controller
         }
 
         return redirect()
-            ->route('home')
-            ->withCookie(cookie('access_token', $token, Auth::guard('api')->factory()->getTTL()));
+    ->route('painel')
+    ->withCookie(cookie('access_token', $token, Auth::guard('api')->factory()->getTTL()));
     }
 
     public function logout(Request $request)

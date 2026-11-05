@@ -26,6 +26,7 @@
                             presentes</a></li>
                     <li class="nav-item"><a class="nav-link" href="{{ route('rsvp.create') }}">Confirme sua presença</a>
                     </li>
+                    <li class="nav-item"><a class="nav-link" href="{{ route('home') }}#informacoes">Informações</a></li>
                 </ul>
             </div>
         </div>

@@ -1,50 +1,75 @@
-<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Categorias</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" >
-</head>
-<body> 
- <div class="container py-3"> 
-          @if (session('mensagem'))
-            <p>{{ session('mensagem') }}</p>
-          @endif
-          
-          <h2>Categorias</h2>
-          <a href="/convidados/create" class="btn btn-success mb-3">Novo Registro</a>
-          <table class="table table-hover table-striped">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Nome</th>
-                <th>Email</th>
-                <th>Telefone</th>
-                <th>Confirma Presença</th>
-                <th>Adultos</th>
-                <th>Crianças</th>
-              </tr>
-            </thead>
-            <tbody>
-              @foreach($convidados as $convidado)
+@extends('layouts.app')
+
+@section('title', 'Convidados')
+
+@section('content')
+<div class="container py-5">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="mb-0">Convidados</h1>
+        <div class="d-flex gap-2">
+            <a href="{{ route('convidados.exportar') }}" class="btn btn-outline-dark">Exportar CSV</a>
+            <a href="{{ route('convidados.create') }}" class="btn btn-success">Novo convidado</a>
+        </div>
+    </div>
+
+    <form method="GET" action="{{ route('convidados.index') }}" class="row g-2 mb-3">
+        <div class="col-md-6">
+            <input type="search" name="q" class="form-control" placeholder="Buscar por nome ou e-mail"
+                   value="{{ request('q') }}">
+        </div>
+        <div class="col-md-4">
+            <select name="presenca" class="form-select" aria-label="Presença">
+                <option value="">Todas as respostas</option>
+                <option value="sim" @selected(request('presenca') === 'sim')>Confirmados</option>
+                <option value="nao" @selected(request('presenca') === 'nao')>Não vão</option>
+                <option value="pendente" @selected(request('presenca') === 'pendente')>Sem resposta</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-dark w-100">Filtrar</button>
+        </div>
+    </form>
+
+    <table class="table table-hover table-striped align-middle">
+        <thead>
+            <tr>
+                <th>Nome</th><th>E-mail</th><th>Telefone</th><th>Presença</th>
+                <th>Adultos</th><th>Crianças</th><th>Ações</th>
+            </tr>
+        </thead>
+        <tbody>
+            @forelse ($convidados as $c)
                 <tr>
-                    <td>{{ $convidado->nome }}</td>
-                    <td>{{ $convidado->email }}</td>
-                    <td>{{ $convidado->telefone }}</td>
-                    <td>{{ $convidado->confirma_presenca }}</td>
-                    <td>{{ $convidado->adultos }}</td>
-                    <td>{{ $convidado->criancas }}</td>
+                    <td>{{ $c->nome }}</td>
+                    <td>{{ $c->email }}</td>
+                    <td>{{ $c->telefone }}</td>
+                    <td>
+                        @if ($c->confirma_presenca === true)
+                            <span class="badge bg-success">Vai</span>
+                        @elseif ($c->confirma_presenca === false)
+                            <span class="badge bg-danger">Não vai</span>
+                        @else
+                            <span class="badge bg-secondary">Sem resposta</span>
+                        @endif
+                    </td>
+                    <td>{{ $c->adultos }}</td>
+                    <td>{{ $c->criancas }}</td>
                     <td class="d-flex gap-2">
-                        <a href="/convidados/{{ $convidado->id }}/edit" class="btn btn-sm btn-warning">Editar</a>
-                        <a href="/convidados/{{ $convidado->id }}" class="btn btn-sm btn-info">Consultar</a>
+                        <a href="{{ route('convidados.edit', $c->id) }}" class="btn btn-sm btn-warning">Editar</a>
+                        <form method="POST" action="{{ route('convidados.destroy', $c->id) }}"
+                              onsubmit="return confirm('Excluir este convidado?')">
+                            @csrf
+                            @method('DELETE')
+                            <button type="submit" class="btn btn-sm btn-danger">Excluir</button>
+                        </form>
                     </td>
                 </tr>
-                @endforeach
-            </tbody>
-          </table>
-        
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/js/bootstrap.bundle.min.js" integrity="sha384-j1CDi7MgGQ12Z7Qab0qlWQ/Qqz24Gc6BM0thvEMVjHnfYGF0rmFCozFSxQBxwHKO" crossorigin="anonymous"></script>
+            @empty
+                <tr><td colspan="7">Nenhum convidado encontrado.</td></tr>
+            @endforelse
+        </tbody>
+    </table>
+
+    {{ $convidados->links() }}
 </div>
-</body>
-</html>
+@endsection

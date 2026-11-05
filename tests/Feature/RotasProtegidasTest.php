@@ -10,6 +10,13 @@ use Tests\TestCase;
 class RotasProtegidasTest extends TestCase
 {
     use RefreshDatabase;
+    // dentro da classe, com `use RefreshDatabase;` no topo dela
+    public function test_noivo_logado_acessa_o_painel(): void
+    {
+        $this->actingAs(User::factory()->create(), 'api')
+            ->get(route('painel'))
+            ->assertOk();
+    }
 
     public function test_visitante_e_enviado_ao_login_ao_editar_noivo(): void
     {

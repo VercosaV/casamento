@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Contribuicao;
 use App\Models\Convidado;
 use App\Models\Presente;
 use Illuminate\Http\Request;
@@ -10,6 +11,14 @@ use Illuminate\Validation\Rule;
 
 class ContribuicaoController extends Controller
 {
+    // Painel dos noivos: rota protegida
+    public function index()
+    {
+        $contribuicoes = Contribuicao::with(['presente', 'convidado'])->latest()->paginate(20);
+
+        return view('contribuicoes.index', compact('contribuicoes'));
+    }
+
     public function store(Request $request, Presente $presente)
     {
         $convidadoId = session('convidado_id');
@@ -20,10 +29,10 @@ class ContribuicaoController extends Controller
         }
 
         $dados = $request->validate([
-            'quantidade_cotas' => ['required', 'integer', 'min:1', 'max:' . $presente->cotas_total],
-            'mensagem'         => ['nullable', 'string', 'max:400'],
-            'nome'             => [Rule::requiredIf($convidadoId === null), 'nullable', 'string', 'max:255'],
-            'email'            => [Rule::requiredIf($convidadoId === null), 'nullable', 'email', 'max:255'],
+            'quantidade_cotas' => ['required', 'integer', 'min:1', 'max:'.$presente->cotas_total],
+            'mensagem' => ['nullable', 'string', 'max:400'],
+            'nome' => [Rule::requiredIf($convidadoId === null), 'nullable', 'string', 'max:255'],
+            'email' => [Rule::requiredIf($convidadoId === null), 'nullable', 'email', 'max:255'],
         ]);
 
         if ($convidadoId === null) {
@@ -40,16 +49,16 @@ class ContribuicaoController extends Controller
             $travado = Presente::whereKey($presente->id)->lockForUpdate()->firstOrFail();
 
             $reservadas = (int) $travado->contribuicoes()->sum('quantidade_cotas');
-            $restantes  = $travado->cotas_total - $reservadas;
+            $restantes = $travado->cotas_total - $reservadas;
 
             if ($dados['quantidade_cotas'] > $restantes) {
                 return $restantes; // não cabe: devolve quantas ainda cabem
             }
 
             $travado->contribuicoes()->create([
-                'convidado_id'     => $convidadoId,
+                'convidado_id' => $convidadoId,
                 'quantidade_cotas' => $dados['quantidade_cotas'],
-                'mensagem'         => $dados['mensagem'] ?? null,
+                'mensagem' => $dados['mensagem'] ?? null,
             ]);
 
             return null; // deu certo

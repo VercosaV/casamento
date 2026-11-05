@@ -4,9 +4,13 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+
 
 class Convidado extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'nome',
         'telefone',        // mantenha até o passo 2.6 e depois remova da lista

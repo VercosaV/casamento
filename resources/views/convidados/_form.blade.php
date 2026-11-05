@@ -23,12 +23,16 @@
     <input type="text" id="telefone" name="telefone" class="form-control"
         value="{{ old('telefone', $convidado->telefone ?? '') }}">
 </div>
+@php
+    $atual = old('confirma_presenca', $convidado->confirma_presenca ?? '');
+    $atual = is_bool($atual) ? (int) $atual : $atual; // true/false do banco viram 1/0
+@endphp
 <div class="mb-3">
     <label for="confirma_presenca" class="form-label">Presença</label>
-    @php $presenca = (int) old('confirma_presenca', $convidado->confirma_presenca ?? 1); @endphp
     <select id="confirma_presenca" name="confirma_presenca" class="form-select">
-        <option value="1" @selected($presenca === 1)>Confirmada</option>
-        <option value="0" @selected($presenca === 0)>Não vai</option>
+        <option value="" @selected($atual === '' || $atual === null)>Sem resposta</option>
+        <option value="1" @selected((string) $atual === '1')>Confirmada</option>
+        <option value="0" @selected((string) $atual === '0')>Não vai</option>
     </select>
 </div>
 <div class="row">

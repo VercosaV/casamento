@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Convidado;
 use Illuminate\Http\Request;
+use App\Http\Requests\RsvpRequest;
+
 
 class RsvpController extends Controller
 {
@@ -12,9 +14,9 @@ class RsvpController extends Controller
         return view('rsvp.create');
     }
 
-    public function store(Request $request)
+    public function store(RsvpRequest $request)
     {
-        $dados = $request->validate([
+        $dados = $request->validated([
             'nome'              => ['required', 'string', 'max:255'],
             'confirma_presenca' => ['required', 'boolean'],
             'adultos'           => ['nullable', 'integer', 'min:1', 'max:10'],
