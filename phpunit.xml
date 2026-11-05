@@ -23,7 +23,10 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="mysql"/>
+        <!-- Os testes usam SQLite em memória: rápidos e NUNCA tocam no seu banco de verdade.
+             Precisa da extensão pdo_sqlite ligada no php.ini. Se preferir MySQL, use um banco
+             SÓ para testes (ex.: casamento_teste): o RefreshDatabase APAGA todas as tabelas dele. -->
+        <env name="DB_CONNECTION" value="sqlite"/>
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>

@@ -1,58 +1,67 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Convite de casamento (Victor & Kamilly)
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Site em Laravel com convite, confirmação de presença (RSVP), lista de presentes com pagamento pelo Stripe e um painel para os noivos.
+Login dos noivos por JWT guardado em cookie.
 
-## About Laravel
-
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
-
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
-
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
-
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+## Primeiros passos (em um computador novo)
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+git clone https://github.com/VercosaV/casamento.git && cd casamento
+composer install
+cp .env.example .env            # no Windows: copy .env.example .env
+php artisan key:generate        # chave do Laravel (APP_KEY)
+php artisan jwt:secret          # chave do login (JWT_SECRET). SEM ESTA, O LOGIN DÁ ERRO 500
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Edite o `.env` com os dados do seu MySQL (`DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`), crie o banco vazio e continue:
 
-## Contributing
+```bash
+php artisan migrate
+php artisan storage:link        # para as fotos enviadas pelo painel aparecerem
+php artisan casamento:criar-noivo   # rode uma vez para cada noivo (pede nome, e-mail e senha)
+php artisan casamento:verificar     # confere se ficou tudo certo
+php artisan serve               # abre em http://localhost:8000
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Depois de mexer no `.env`, rode `php artisan config:clear`.
 
-## Code of Conduct
+Entre em `http://localhost:8000/login` com o e-mail e a senha que você cadastrou. O painel fica em `/painel`.
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+## Comandos do projeto
 
-## Security Vulnerabilities
+| Comando | Para quê |
+|---|---|
+| `php artisan casamento:criar-noivo` | cria o login de um noivo (rodar de novo com o mesmo e-mail troca a senha) |
+| `php artisan casamento:verificar` | diagnóstico: chaves, banco, noivos, fotos, testes e Stripe |
+| `php artisan casamento:apagar-dados --confirmo` | apaga os dados dos convidados depois do casamento (**exporte antes**) |
+| `php artisan test` | roda os testes (usam SQLite em memória, não tocam no seu banco) |
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## Problemas comuns
 
-## License
+| O que aparece | Causa | Solução |
+|---|---|---|
+| Erro 500 no login, `SecretMissingException` | falta o `JWT_SECRET` no `.env` | `php artisan jwt:secret` e depois `php artisan config:clear`. Confira no `.env` que apareceu uma linha `JWT_SECRET=` com um texto longo |
+| Erro 500 no login, `InvalidKeyProvided` | existe a linha `JWT_SECRET=` mas vazia | `php artisan jwt:secret --force` |
+| "Credenciais inválidas" | e-mail ou senha errados, ou o noivo não foi criado | `php artisan casamento:criar-noivo` (refaz a senha) |
+| `php artisan test`: `could not find driver` | extensão `pdo_sqlite` desligada | ative `extension=pdo_sqlite` no `php.ini` |
+| Fotos enviadas não aparecem | falta o link do storage | `php artisan storage:link` |
+| Pagamento não confirma sozinho | falta o webhook do Stripe | veja a seção Stripe |
+| Qualquer coisa estranha | | `php artisan casamento:verificar` |
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## Testes
+
+`php artisan test` usa SQLite em memória (configurado no `phpunit.xml`). Se quiser rodar com MySQL, crie um banco **só para testes** (por exemplo `casamento_teste`): os testes apagam e recriam todas as tabelas dele. **Nunca aponte os testes para o seu banco de verdade.**
+
+## Stripe (pagamento dos presentes)
+
+Sem `STRIPE_SK` no `.env` o site funciona no modo "reservar presente", sem pagamento. Para ligar o pagamento em **modo de teste**:
+
+1. Crie a conta em dashboard.stripe.com e copie a chave secreta de teste (`sk_test_...`) para `STRIPE_SK`.
+2. Instale o Stripe CLI e rode `stripe listen --forward-to localhost:8000/stripe/webhook`. Copie o `whsec_...` que ele mostra para `STRIPE_WEBHOOK_SECRET`.
+3. `php artisan config:clear` e faça um pagamento com o cartão de teste `4242 4242 4242 4242`.
+
+Chaves ficam **só no `.env`** (ele não vai para o Git). Este repositório é público.
+
+## Produção
+
+No `.env` do servidor: `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL=https://seu-dominio`, `SESSION_SECURE_COOKIE=true`, chave `sk_live_...` e o webhook cadastrado no painel do Stripe para `https://seu-dominio/stripe/webhook`. Rode `php artisan casamento:verificar` no servidor antes de divulgar o convite.

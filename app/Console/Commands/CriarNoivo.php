@@ -49,6 +49,15 @@ class CriarNoivo extends Command
             );
         });
 
+        // Este comando só grava no banco. Quem assina o token do login é o JWT_SECRET:
+        // sem ele o perfil existe, mas o login falha. Avisamos agora, não depois.
+        if (blank(config('jwt.secret'))) {
+            $this->warn("Perfil criado: {$email}, mas o login ainda NÃO vai funcionar: falta o JWT_SECRET.");
+            $this->warn('Rode: php artisan jwt:secret   e depois: php artisan config:clear');
+
+            return self::SUCCESS;
+        }
+
         $this->info("Perfil pronto: {$email}. Já pode entrar em /login.");
 
         return self::SUCCESS;
