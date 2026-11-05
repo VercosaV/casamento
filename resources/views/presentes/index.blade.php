@@ -7,6 +7,9 @@
     <div class="container">
         <h1 class="mb-2">Lista de presentes</h1>
         <p class="text-center text-muted mb-4">Escolha um presente ou contribua com uma cota. Seu carinho já é o maior presente.</p>
+        @if (config('stripe.habilitado'))
+            <p class="text-center small text-muted mb-4">Depois de escolher, você será levado à página segura do Stripe para pagar.</p>
+        @endif
 
         @if ($errors->any())
             <div class="alert alert-danger" role="alert">
@@ -103,8 +106,15 @@
                                         placeholder="Mensagem para os noivos (opcional)"></textarea>
 
                                     <button type="submit" class="btn btn-ouro btn-sm w-100">
-                                        {{ $presente->cotas_total > 1 ? 'Contribuir' : 'Escolher este presente' }}
+                                        @if (config('stripe.habilitado'))
+                                            {{ $presente->cotas_total > 1 ? 'Contribuir e pagar' : 'Presentear e pagar' }}
+                                        @else
+                                            {{ $presente->cotas_total > 1 ? 'Contribuir' : 'Escolher este presente' }}
+                                        @endif
                                     </button>
+                                    @if (config('stripe.habilitado'))
+                                        <div class="form-text text-center mt-1">Pagamento seguro pelo Stripe. Não guardamos dados do cartão.</div>
+                                    @endif
                                 </form>
                             @endif
                         </div>

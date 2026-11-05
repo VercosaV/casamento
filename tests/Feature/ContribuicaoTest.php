@@ -39,7 +39,7 @@ class ContribuicaoTest extends TestCase
     public function test_nao_aceita_mais_cotas_do_que_restam(): void
     {
         $presente = Presente::factory()->create(['cotas_total' => 4]);
-        Contribuicao::create(['presente_id' => $presente->id, 'quantidade_cotas' => 3]);
+        Contribuicao::create(['presente_id' => $presente->id, 'quantidade_cotas' => 3, 'status' => 'paga']);
 
         $this->post(route('presentes.contribuir', $presente), $this->envio(2))
             ->assertSessionHas('erro');
@@ -50,7 +50,7 @@ class ContribuicaoTest extends TestCase
     public function test_presente_esgotado_nao_aceita_mais_nada(): void
     {
         $presente = Presente::factory()->create(['cotas_total' => 1]);
-        Contribuicao::create(['presente_id' => $presente->id, 'quantidade_cotas' => 1]);
+        Contribuicao::create(['presente_id' => $presente->id, 'quantidade_cotas' => 1, 'status' => 'paga']);
 
         $this->post(route('presentes.contribuir', $presente), $this->envio(1))
             ->assertSessionHas('erro');

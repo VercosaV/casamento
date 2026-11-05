@@ -14,6 +14,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // O Stripe não envia o token CSRF; ele prova quem é pela assinatura do webhook.
+        $middleware->validateCsrfTokens(except: ['stripe/webhook']);
+
         $middleware->alias([
             'jwt.cookie' => JwtFromCookie::class,
             'noivo' => ApenasNoivos::class,

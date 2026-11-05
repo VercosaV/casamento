@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Models\Contribuicao;
 use App\Models\Convidado;
-use Illuminate\Support\Facades\DB;
 
 class PainelController extends Controller
 {
@@ -21,14 +20,18 @@ class PainelController extends Controller
             'adultos'     => $adultos,
             'criancas'    => $criancas,
             'pessoas'     => $adultos + $criancas,
-            'cotas'       => (int) Contribuicao::sum('quantidade_cotas'),
-            'presentes'   => Contribuicao::distinct()->count('presente_id'),
-            'valor'       => (float) DB::table('contribuicoes')
-                ->join('presentes', 'presentes.id', '=', 'contribuicoes.presente_id')
-                ->sum(DB::raw('contribuicoes.quantidade_cotas * (presentes.valor / presentes.cotas_total)')),
+            // "Escolhidas" = pagas + reservadas sem pagamento. Pendentes ainda não contam como presente dado.
+            'cotas'       => (int) Contribuicao::whereIn('status', [Contribuicao::PAGA, Contribuicao::RESERVADA])->sum('quantidade_cotas'),
+            'presentes'   => Contribuicao::whereIn('status', [Contribuicao::PAGA, Contribuicao::RESERVADA])->distinct()->count('presente_id'),
+            // Dinheiro de verdade: só o que o Stripe confirmou. Guardado em centavos (inteiro).
+            'recebido'    => Contribuicao::where('status', Contribuicao::PAGA)->sum('valor_centavos') / 100,
+            'reservado'   => Contribuicao::where('status', Contribuicao::RESERVADA)->sum('valor_centavos') / 100,
+            'aguardando'  => Contribuicao::ocupandoCota()->where('status', Contribuicao::PENDENTE)->count(),
         ];
 
-        $recentes = Contribuicao::with(['presente', 'convidado'])->latest()->take(5)->get();
+        $recentes = Contribuicao::with(['presente', 'convidado'])
+            ->whereIn('status', [Contribuicao::PAGA, Contribuicao::RESERVADA])
+            ->latest()->take(5)->get();
 
         return view('painel.index', compact('stats', 'recentes'));
     }

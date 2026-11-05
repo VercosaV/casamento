@@ -18,7 +18,7 @@ class PresenteController extends Controller
         $categoria   = $request->query('categoria');
         $disponiveis = $request->boolean('disponiveis');
 
-        $query = Presente::query()->withSum('contribuicoes', 'quantidade_cotas');
+        $query = Presente::query()->withSum('contribuicoesAtivas', 'quantidade_cotas');
 
         if ($categoria) {
             $query->where('categoria', $categoria);
@@ -26,9 +26,14 @@ class PresenteController extends Controller
 
         if ($disponiveis) {
             // Filtra no banco (e não na coleção) para continuar funcionando com paginação.
+            // Mesma regra de Contribuicao::scopeOcupandoCota(), escrita em SQL.
             $query->whereRaw(
-                'cotas_total > (SELECT COALESCE(SUM(quantidade_cotas), 0)
-                                FROM contribuicoes WHERE contribuicoes.presente_id = presentes.id)'
+                "cotas_total > (SELECT COALESCE(SUM(quantidade_cotas), 0)
+                                FROM contribuicoes
+                                WHERE contribuicoes.presente_id = presentes.id
+                                  AND (status IN ('paga', 'reservada')
+                                       OR (status = 'pendente' AND expira_em > ?)))",
+                [now()]
             );
         }
 
@@ -48,7 +53,7 @@ class PresenteController extends Controller
 
     public function admin()
     {
-        $presentes = Presente::withSum('contribuicoes', 'quantidade_cotas')->orderBy('nome')->get();
+        $presentes = Presente::withSum('contribuicoesAtivas', 'quantidade_cotas')->orderBy('nome')->get();
 
         return view('presentes.admin', compact('presentes'));
     }

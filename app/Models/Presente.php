@@ -27,14 +27,27 @@ class Presente extends Model
         return $this->hasMany(Contribuicao::class);
     }
 
-    // Usa a soma já carregada por withSum() quando existir (1 consulta para a lista toda).
-    // Sem ela, consulta o banco (1 consulta por presente).
+    // Só as contribuições que seguram cota (pagas, reservadas, pendentes no prazo).
+    public function contribuicoesAtivas(): HasMany
+    {
+        return $this->hasMany(Contribuicao::class)->ocupandoCota();
+    }
+
+    // Usa a soma já carregada por withSum('contribuicoesAtivas', ...) quando existir
+    // (1 consulta para a lista toda). Sem ela, consulta o banco (1 por presente).
     protected function cotasReservadas(): Attribute
     {
         return Attribute::get(
-            fn () => (int) ($this->contribuicoes_sum_quantidade_cotas
-                ?? $this->contribuicoes()->sum('quantidade_cotas'))
+            fn () => (int) ($this->contribuicoes_ativas_sum_quantidade_cotas
+                ?? $this->contribuicoesAtivas()->sum('quantidade_cotas'))
         );
+    }
+
+    // Valor de UMA cota em centavos (inteiro). O Stripe só aceita inteiros: 33,33 reais = 3333.
+    // round() depois de multiplicar evita o clássico 19.99 * 100 = 1998.9999999999998.
+    protected function valorCotaCentavos(): Attribute
+    {
+        return Attribute::get(fn () => (int) round(((float) $this->valor * 100) / $this->cotas_total));
     }
 
     protected function cotasRestantes(): Attribute

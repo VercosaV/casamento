@@ -8,6 +8,7 @@
         <h1 class="mb-4">Privacidade</h1>
         <p>Este site é do casamento de {{ $secaoInicio->titulo ?? 'nós dois' }} e guarda apenas os dados que você informa: nome, e-mail, telefone, quantidade de pessoas, observações, mensagens e os presentes que escolher.</p>
         <p><strong>Para que usamos:</strong> organizar a lista de convidados, a festa e os agradecimentos. Não vendemos nem compartilhamos esses dados.</p>
+        <p><strong>Pagamentos:</strong> quando você paga um presente, o pagamento é feito na página do Stripe (operadora de pagamentos). Enviamos a ela seu e-mail e o valor. Os dados do cartão ou do Pix ficam só com o Stripe: nós não vemos nem guardamos.</p>
         <p><strong>Quem acessa:</strong> apenas os noivos, por área com senha.</p>
         <p><strong>Por quanto tempo:</strong> até pouco depois do casamento. Depois disso, os dados são apagados.</p>
         <p><strong>Seus direitos:</strong> para ver, corrigir ou apagar seus dados, escreva para <a href="mailto:SEU-EMAIL@exemplo.com">SEU-EMAIL@exemplo.com</a>.</p>

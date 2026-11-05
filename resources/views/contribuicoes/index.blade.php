@@ -8,7 +8,7 @@
 
     <table class="table table-striped align-middle">
         <thead>
-            <tr><th>Quando</th><th>Convidado</th><th>Presente</th><th>Cotas</th><th>Mensagem</th></tr>
+            <tr><th>Quando</th><th>Convidado</th><th>Presente</th><th>Cotas</th><th>Valor</th><th>Situação</th><th>Mensagem</th></tr>
         </thead>
         <tbody>
             @forelse ($contribuicoes as $c)
@@ -17,10 +17,24 @@
                     <td>{{ $c->convidado->nome ?? 'Convidado removido' }}</td>
                     <td>{{ $c->presente->nome }}</td>
                     <td>{{ $c->quantidade_cotas }}</td>
+                    <td>{{ $c->valor_reais !== null ? 'R$ '.number_format($c->valor_reais, 2, ',', '.') : '—' }}</td>
+                    <td>
+                        @php
+                            [$rotulo, $cor] = match ($c->status_efetivo) {
+                                'paga'      => ['Paga', 'success'],
+                                'pendente'  => ['Aguardando pagamento', 'warning text-dark'],
+                                'reservada' => ['Reservada (sem pagamento)', 'info text-dark'],
+                                'expirada'  => ['Expirada', 'secondary'],
+                                'cancelada' => ['Cancelada', 'secondary'],
+                                default     => ['Falhou', 'danger'],
+                            };
+                        @endphp
+                        <span class="badge bg-{{ $cor }}">{{ $rotulo }}</span>
+                    </td>
                     <td>{{ $c->mensagem }}</td>
                 </tr>
             @empty
-                <tr><td colspan="5">Nenhuma escolha ainda.</td></tr>
+                <tr><td colspan="7">Nenhuma escolha ainda.</td></tr>
             @endforelse
         </tbody>
     </table>

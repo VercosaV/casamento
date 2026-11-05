@@ -4,6 +4,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ContribuicaoController;
 use App\Http\Controllers\ConvidadoController;
 use App\Http\Controllers\HomeController;
+use App\Http\Controllers\PagamentoController;
 use App\Http\Controllers\PainelController;
 use App\Http\Controllers\PerfilController;
 use App\Http\Controllers\PresenteController;
@@ -70,3 +71,12 @@ Route::middleware(['jwt.cookie', 'auth:api', 'noivo'])->group(function () {
 Route::get('/presentes', [PresenteController::class, 'index'])->name('presentes.index');
 Route::post('/presentes/{presente}/contribuir', [ContribuicaoController::class, 'store'])
     ->middleware('throttle:rsvp')->name('presentes.contribuir');
+
+// ---------- Pagamento (Stripe) ----------
+// Retorno do Checkout. O {token} é um UUID aleatório: identifica a compra sem expor o id.
+Route::get('/pagamento/sucesso/{token}', [PagamentoController::class, 'sucesso'])->name('pagamento.sucesso');
+Route::get('/pagamento/cancelado/{token}', [PagamentoController::class, 'cancelado'])->name('pagamento.cancelado');
+
+// Quem chama é o servidor do Stripe (sem navegador, sem cookie, sem CSRF).
+// A segurança aqui é a ASSINATURA do aviso, conferida no controller. Veja bootstrap/app.php.
+Route::post('/stripe/webhook', [PagamentoController::class, 'webhook'])->name('stripe.webhook');

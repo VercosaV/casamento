@@ -13,8 +13,10 @@
         ['Crianças confirmadas', $stats['criancas']],
         ['Pessoas esperadas', $stats['pessoas']],
         ['Presentes com escolha', $stats['presentes']],
-        ['Cotas reservadas', $stats['cotas']],
-        ['Valor reservado', 'R$ ' . number_format($stats['valor'], 2, ',', '.')],
+        ['Cotas escolhidas', $stats['cotas']],
+        ['Valor recebido (pago)', 'R$ ' . number_format($stats['recebido'], 2, ',', '.')],
+        ['Aguardando pagamento', $stats['aguardando']],
+        ['Reservado sem pagamento', 'R$ ' . number_format($stats['reservado'], 2, ',', '.')],
     ];
 @endphp
 <div class="py-2">
@@ -39,7 +41,7 @@
         @endforeach
     </div>
 
-    <h2 class="h4">Últimas escolhas de presentes</h2>
+    <h2 class="h4">Últimos presentes confirmados</h2>
     <table class="table table-striped align-middle">
         <thead>
             <tr><th>Quando</th><th>Presente</th><th>Convidado</th><th>Cotas</th><th>Mensagem</th></tr>

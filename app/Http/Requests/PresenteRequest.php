@@ -43,6 +43,6 @@ class PresenteRequest extends FormRequest
             return 0; // criando um presente novo
         }
 
-        return (int) Presente::find($id)?->contribuicoes()->sum('quantidade_cotas');
+        return (int) Presente::find($id)?->contribuicoesAtivas()->sum('quantidade_cotas');
     }
 }
