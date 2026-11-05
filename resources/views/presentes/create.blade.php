@@ -11,7 +11,8 @@
 <body>
     <div class="container py-3">
         <h1>Novo Presente</h1>
-        <form method="post" action='/presentes'>
+        <form method="post" action='/presentes'
+        enctype="multipart/form-data">
         @CSRF
         @method('PUT')
         @include('presentes._form')

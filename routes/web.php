@@ -6,6 +6,8 @@ use App\Http\Controllers\NoivoController;
 use App\Http\Controllers\PresenteController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\RsvpController;
+use App\Http\Controllers\ContribuicaoController;
+
 
 // ---------- Público (qualquer visitante, sem login) ----------
 
@@ -41,7 +43,7 @@ Route::middleware(['jwt.cookie', 'auth:api'])->group(function () {
 // ---------- Público de novo: lista de presentes (por último, de propósito) ----------
 // O Laravel casa as rotas na ordem. Se /presentes/{presente} viesse antes de
 // /presentes/create, a palavra "create" seria tratada como o id de um presente.
-
 Route::get('/presentes', [PresenteController::class, 'index'])->name('presentes.index');
-Route::get('/presentes/{presente}', [PresenteController::class, 'show'])->name('presentes.show');
-Route::post('/presentes/{presente}/reservar', [PresenteController::class, 'reservar'])->name('presentes.reservar');
+Route::post('/presentes/{presente}/contribuir', [ContribuicaoController::class, 'store'])
+    ->name('presentes.contribuir');
+

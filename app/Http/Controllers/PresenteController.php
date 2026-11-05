@@ -2,24 +2,51 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Convidado;
 use App\Models\Presente;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class PresenteController extends Controller
 {
-    // Página pública: lista de presentes disponíveis pros convidados
-    public function index()
-    {
-        $presentes = Presente::all();
+    // ---------- Público ----------
 
-        return view('presentes.index', compact('presentes'));
+    public function index(Request $request)
+    {
+        $ordem       = $request->query('ordem', 'nome');
+        $categoria   = $request->query('categoria');
+        $disponiveis = $request->boolean('disponiveis');
+
+        $query = Presente::query()->withSum('contribuicoes', 'quantidade_cotas');
+
+        if ($categoria) {
+            $query->where('categoria', $categoria);
+        }
+
+        if ($disponiveis) {
+            // Filtra no banco (e não na coleção) para continuar funcionando com paginação.
+            $query->whereRaw(
+                'cotas_total > (SELECT COALESCE(SUM(quantidade_cotas), 0)
+                                FROM contribuicoes WHERE contribuicoes.presente_id = presentes.id)'
+            );
+        }
+
+        match ($ordem) {
+            'menor-preco' => $query->orderBy('valor'),
+            'maior-preco' => $query->orderByDesc('valor'),
+            default       => $query->orderBy('nome'),
+        };
+
+        $presentes  = $query->get();
+        $categorias = Presente::whereNotNull('categoria')->distinct()->orderBy('categoria')->pluck('categoria');
+
+        return view('presentes.index', compact('presentes', 'categorias', 'ordem', 'categoria', 'disponiveis'));
     }
 
-    // Painel do admin: tabela de gerenciamento (criar/editar/excluir)
+    // ---------- Painel dos noivos ----------
+
     public function admin()
     {
-        $presentes = Presente::all();
+        $presentes = Presente::withSum('contribuicoes', 'quantidade_cotas')->orderBy('nome')->get();
 
         return view('presentes.admin', compact('presentes'));
     }
@@ -31,74 +58,16 @@ class PresenteController extends Controller
 
     public function store(Request $request)
     {
-        Presente::create($this->validar($request));
+        $dados = $this->validar($request);
+        unset($dados['imagem']); // o arquivo não vai direto para o banco
+
+        if ($request->hasFile('imagem')) {
+            $dados['imagem'] = $request->file('imagem')->store('presentes', 'public');
+        }
+
+        Presente::create($dados);
 
         return redirect()->route('presentes.admin')->with('mensagem', 'Presente criado com sucesso!');
-    }
-
-    public function show(string $id)
-    {
-        $presente = Presente::findOrFail($id);
-
-        return view('presentes.show', compact('presente'));
-    }
-
-    private function validar(Request $request): array
-    {
-        return $request->validate([
-            'nome' => ['required', 'string', 'max:255'],
-            'descricao' => ['nullable', 'string', 'max:1000'],
-            'valor' => ['required', 'numeric', 'min:0', 'max:999999.99'],
-            'link' => ['nullable', 'url', 'max:255'],
-        ]);
-    }
-
-    public function reservar(Request $request, string $id)
-    {
-        $presente = Presente::findOrFail($id);
-
-        // Atalho amigável. A proteção de verdade é o UPDATE condicional mais abaixo.
-        if ($presente->comprado) {
-            return redirect()
-                ->route('presentes.index')
-                ->with('mensagem', 'Esse presente já foi escolhido por outro convidado.');
-        }
-
-        $convidadoId = session('convidado_id');
-
-        if (! $convidadoId) {
-            $dados = $request->validate([
-                'nome' => 'required|string|max:255',
-                'cpf' => 'required|string|max:14',
-                'email' => 'nullable|email|max:255',
-            ]);
-
-            $convidado = Convidado::firstOrCreate(
-                ['cpf' => $dados['cpf']],
-                ['nome' => $dados['nome'], 'email' => $dados['email'] ?? null]
-            );
-
-            $convidadoId = $convidado->id;
-            session(['convidado_id' => $convidadoId]);
-        }
-
-        // Checagem + gravação em uma única instrução SQL
-        $reservou = Presente::where('id', $presente->id)
-            ->where('comprado', false)
-            ->update([
-                'comprado' => true,
-                'convidado_id' => $convidadoId,
-            ]);
-
-        if ($reservou === 0) {
-            return redirect()
-                ->route('presentes.index')
-                ->with('mensagem', 'Esse presente acabou de ser escolhido por outra pessoa.');
-        }
-
-        return redirect()
-            ->route('presentes.index')
-            ->with('mensagem', 'Presente reservado! Muito obrigado 💝');
     }
 
     public function edit(string $id)
@@ -111,143 +80,51 @@ class PresenteController extends Controller
     public function update(Request $request, string $id)
     {
         $presente = Presente::findOrFail($id);
-        if ($presente->update($request->all())) {
-            return redirect()->route('presentes.admin')->with('mensagem', 'Presente alterado!');
+
+        $dados = $this->validar($request, $presente);
+        unset($dados['imagem']);
+
+        if ($request->hasFile('imagem')) {
+            if ($presente->imagem) {
+                Storage::disk('public')->delete($presente->imagem);
+            }
+            $dados['imagem'] = $request->file('imagem')->store('presentes', 'public');
         }
 
-        return redirect()->route('presentes.admin')->with('mensagem', 'Erro ao alterar!');
+        $presente->update($dados);
+
+        return redirect()->route('presentes.admin')->with('mensagem', 'Presente alterado!');
     }
 
     public function destroy(string $id)
     {
         $presente = Presente::findOrFail($id);
-        if ($presente->delete()) {
-            return redirect()->route('presentes.admin')->with('mensagem', 'Presente excluído!');
+
+        if ($presente->imagem) {
+            Storage::disk('public')->delete($presente->imagem);
         }
 
-        return redirect()->route('presentes.admin')->with('mensagem', 'Erro ao excluir!');
+        $presente->delete(); // as contribuições vão junto (cascadeOnDelete)
+
+        return redirect()->route('presentes.admin')->with('mensagem', 'Presente excluído!');
+    }
+
+    private function validar(Request $request, ?Presente $presente = null): array
+    {
+        $reservadas = $presente ? (int) $presente->contribuicoes()->sum('quantidade_cotas') : 0;
+
+        return $request->validate([
+            'nome'        => ['required', 'string', 'max:255'],
+            'descricao'   => ['nullable', 'string', 'max:1000'],
+            'valor'       => ['required', 'numeric', 'min:0', 'max:999999.99'],
+            'link'        => ['nullable', 'url', 'max:255'],
+            'categoria'   => ['nullable', 'string', 'max:60'],
+            'cotas_total' => ['required', 'integer', 'min:' . max(1, $reservadas), 'max:100'],
+            'imagem'      => ['nullable', 'image', 'max:2048'],
+        ], [
+            'cotas_total.min' => "Já existem {$reservadas} cota(s) reservadas. O total não pode ser menor que isso.",
+            'imagem.image'    => 'O arquivo precisa ser uma imagem.',
+            'imagem.max'      => 'A imagem pode ter no máximo 2 MB.',
+        ]);
     }
 }
-
-/*
-namespace App\Http\Controllers;
-
-use App\Models\Presente;
-use Illuminate\Http\Request;
-
-class PresenteController extends Controller
-{
-      /**
-     * Display a listing of the resource.
-     *
-     * responsável por trazer todos
-     * os dados, a lista
-     * relacionada a tabela que
-     * vamos traabalhar
-     * vamos chamar a página
-     * que vai ter todos
-     * os registros de categoria
-     *
-
-    public function index()
-    {
-        $presentes = Presente::all();
-        return view('presentes.index', compact('presentes'));
-
-    }
-
-    /**
-     * Show the form for creating a new resource.
-     *
-     *  responsável por chamar o form
-     * que vai possibilitar criar
-     * um novo registro na tabela
-
-    public function create()
-    {
-        return view('presentes.create');
-
-    }
-
-    /**
-     * Store a newly created resource in storage.
-     *
-     * a diferença é que o create eu vou chamar
-     * o formulário para eu poder inserir os dados
-     * e criar o registro
-     *
-     *
-     * o store vou receber esses dados e vou
-     * armazenar no banco de dados
-
-    public function store(Request $request)
-    {
-        if( Presente::create($request->all()))
-            {
-                return redirect()->route('presentes.index')->with('mensagem', 'Presente criado com sucesso!');
-            } else {
-                return redirect()->route('presentes.index')->with('mensagem', 'Erro ao inserir o Presente!');
-            }
-    }
-
-    /**
-     * Display the specified resource.
-     *
-     * esse método vai ser responsável por chanar
-     * uma view passae os dados para essa view
-     * para mostrar os dados de um registro espe
-     * cífico
-
-    public function show(String $id)
-    {
-        $presentes = Presente::findOrFail($id);
-        return view('presentes.show', compact('Presente'));
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     *
-     * vai chamar um formulario para eu poder
-     * editar um registro em específico
-     *
-
-    public function edit(String $id)
-    {
-        $presentes = Presente::findOrFail($id);
-        return view('presentes.edit', compact('Presente'));
-    }
-
-    /**
-     * Update the specified resource in storage.
-     *
-     * receber os dados que foram editados e
-     * fazer a alteração
-
-    public function update(Request $request, String $id)
-    {
-        $presentes = Presente::findOrFail($id);
-        if($presentes->update($request->all())){
-            return redirect()->route('presentes.index')->with('mensagem', 'Presente alterado!');
-        } else {
-            return redirect()->route('presentes.index')->with('mensagem', 'Erro ao alterar!');
-        }
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     *
-     * vai receber um id por parametro
-     * e vai excluir do banco de dados
-     *
-
-    public function destroy(String $id)
-    {
-        $presentes = Presente::findOrFail($id);
-        if($presentes->delete()) {
-            return redirect()->route('presentes.index')->with('mensagem', 'Presente excluído!');
-        } else {
-            return redirect()->route('presentes.index')->with('mensagem', 'Erro ao excluir!');
-        }
-    }
-}
-*/

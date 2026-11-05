@@ -1,44 +1,41 @@
-<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gerenciar Presentes</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body>
-<div class="container py-3">
-    @if (session('mensagem'))
-        <p>{{ session('mensagem') }}</p>
-    @endif
+@extends('layouts.app')
 
-    <h2>Gerenciar Presentes</h2>
-    <a href="/presentes/create" class="btn btn-success mb-3">Novo Registro</a>
-    <table class="table table-hover table-striped">
+@section('title', 'Gerenciar presentes')
+
+@section('content')
+<div class="container py-5">
+    <h1 class="mb-3">Gerenciar presentes</h1>
+    <a href="{{ route('presentes.create') }}" class="btn btn-success mb-3">Novo presente</a>
+
+    <table class="table table-hover table-striped align-middle">
         <thead>
             <tr>
-                <th>ID</th>
-                <th>Nome</th>
-                <th>Descrição</th>
-                <th>Comprado?</th>
+                <th>Presente</th>
+                <th>Categoria</th>
+                <th>Valor</th>
+                <th>Cotas</th>
                 <th>Ações</th>
             </tr>
         </thead>
         <tbody>
-            @foreach($presentes as $p)
+            @foreach ($presentes as $p)
                 <tr>
-                    <td>{{ $p->id }}</td>
                     <td>{{ $p->nome }}</td>
-                    <td>{{ $p->descricao }}</td>
-                    <td>{{ $p->comprado ? 'Sim' : 'Não' }}</td>
+                    <td>{{ $p->categoria ?? '—' }}</td>
+                    <td>R$ {{ number_format($p->valor, 2, ',', '.') }}</td>
+                    <td>{{ $p->cotas_reservadas }} / {{ $p->cotas_total }}</td>
                     <td class="d-flex gap-2">
-                        <a href="/presentes/{{ $p->id }}/edit" class="btn btn-sm btn-warning">Editar</a>
-                        <a href="/presentes/{{ $p->id }}" class="btn btn-sm btn-info">Consultar</a>
+                        <a href="{{ route('presentes.edit', $p->id) }}" class="btn btn-sm btn-warning">Editar</a>
+                        <form method="POST" action="{{ route('presentes.destroy', $p->id) }}"
+                              onsubmit="return confirm('Excluir este presente e as escolhas já feitas nele?')">
+                            @csrf
+                            @method('DELETE')
+                            <button type="submit" class="btn btn-sm btn-danger">Excluir</button>
+                        </form>
                     </td>
                 </tr>
             @endforeach
         </tbody>
     </table>
 </div>
-</body>
-</html>
+@endsection

@@ -11,7 +11,8 @@
 <body>
     <div class="container py-3">
         <h1>Editar Presente</h1>
-        <form method="post" action='/presentes/{{ $presente->id }}'>
+        <form method="post" action='/presentes/{{ $presente->id }}'
+            enctype="multipart/form-data">
         @CSRF
         @method('PUT')
         @include('presentes._form')

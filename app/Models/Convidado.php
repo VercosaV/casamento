@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Convidado extends Model
 {
@@ -21,5 +22,10 @@ class Convidado extends Model
         return [
             'confirma_presenca' => 'boolean',
         ];
+    }
+
+    public function contribuicoes(): HasMany
+    {
+        return $this->hasMany(Contribuicao::class);
     }
 }
