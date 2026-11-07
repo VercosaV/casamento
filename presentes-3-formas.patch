@@ -1,0 +1,2933 @@
+diff --git a/.env.example b/.env.example
+index 4ce2733..5e5e106 100644
+--- a/.env.example
++++ b/.env.example
+@@ -82,3 +82,14 @@ STRIPE_WEBHOOK_SECRET=
+ STRIPE_MINUTOS_RESERVA=35
+ # Valor mínimo por pagamento, em centavos (500 = R$ 5,00)
+ STRIPE_VALOR_MINIMO_CENTAVOS=500
++
++# Presentes: formas de enviar. Cada uma só aparece para o convidado se estiver configurada.
++# ATENÇÃO: valor com espaço PRECISA de aspas (PIX_BENEFICIARIO="Victor e Kamilly"). Sem aspas o Laravel
++# não lê o .env e o site INTEIRO dá erro 500.
++# Pix direto: a chave que os convidados vão ver (e o nome de quem recebe)
++PIX_CHAVE=
++PIX_BENEFICIARIO=""
++# Horas que as cotas ficam seguradas esperando o Pix (os noivos confirmam à mão no painel)
++PIX_HORAS_RESERVA=48
++# "Comprar o presente": onde o convidado entrega. Para várias linhas use \n entre aspas.
++ENDERECO_ENTREGA=""
+diff --git a/README.md b/README.md
+index 4c74290..f5345c2 100644
+--- a/README.md
++++ b/README.md
+@@ -27,6 +27,18 @@ ## Primeiros passos (em um computador novo)
+ 
+ Entre em `http://localhost:8000/login` com o e-mail e a senha que você cadastrou. O painel fica em `/painel`.
+ 
++## Presentes: as 3 formas de enviar
++
++O convidado junta um ou mais presentes em **Minha lista** e escolhe **uma** forma de enviar todos:
++
++| Forma | O que acontece | Quem confirma | Precisa configurar |
++|---|---|---|---|
++| **Comprar o presente** | o convidado compra numa loja e entrega; o presente fica reservado | os noivos clicam em *Recebi* | `ENDERECO_ENTREGA` (opcional). Só vale para presentes inteiros, sem cotas |
++| **Pagar online** | página segura do Stripe (cartão; Pix com QR Code se estiver ativo na conta Stripe) | automático, pelo webhook | `STRIPE_SK` e `STRIPE_WEBHOOK_SECRET` |
++| **Pix direto** | mostramos a chave Pix, o valor exato e um código de referência | os noivos clicam em *Pix chegou* | `PIX_CHAVE` e `PIX_BENEFICIARIO` |
++
++Uma forma sem configuração simplesmente não aparece habilitada. Em **Painel > Quem presenteou** os noivos acompanham todos os pedidos e resolvem os manuais (confirmar Pix, receber presente, cancelar).
++
+ ## Comandos do projeto
+ 
+ | Comando | Para quê |
+@@ -46,6 +58,7 @@ ## Problemas comuns
+ | `php artisan test`: `could not find driver` | extensão `pdo_sqlite` desligada | ative `extension=pdo_sqlite` no `php.ini` |
+ | Fotos enviadas não aparecem | falta o link do storage | `php artisan storage:link` |
+ | Pagamento não confirma sozinho | falta o webhook do Stripe | veja a seção Stripe |
++| Site inteiro com erro 500 depois de editar o `.env`, e no log `Failed to parse dotenv file` | valor com espaço **sem aspas** (ex.: `PIX_BENEFICIARIO=Victor e Kamilly`) | coloque entre aspas: `PIX_BENEFICIARIO="Victor e Kamilly"` |
+ | Qualquer coisa estranha | | `php artisan casamento:verificar` |
+ 
+ ## Testes
+diff --git a/app/Console/Commands/VerificarAmbiente.php b/app/Console/Commands/VerificarAmbiente.php
+index 743cbec..c32443b 100644
+--- a/app/Console/Commands/VerificarAmbiente.php
++++ b/app/Console/Commands/VerificarAmbiente.php
+@@ -54,7 +54,7 @@ public function handle(): int
+             DB::connection()->getPdo();
+             $this->ok('Conexão com o banco ('.config('database.default').')');
+ 
+-            $faltando = collect(['users', 'noivos', 'convidados', 'presentes', 'contribuicoes', 'secoes'])
++            $faltando = collect(['users', 'noivos', 'convidados', 'presentes', 'pedidos', 'contribuicoes', 'secoes'])
+                 ->reject(fn ($tabela) => Schema::hasTable($tabela));
+ 
+             $faltando->isEmpty()
+@@ -101,7 +101,16 @@ public function handle(): int
+                 : $this->ok('STRIPE_WEBHOOK_SECRET configurado');
+         }
+ 
+-        // 6) Produção
++        // 6) Formas de enviar o presente (o convidado escolhe entre as que estiverem configuradas)
++        filled(config('casamento.pix.chave'))
++            ? $this->ok('Pix direto: chave cadastrada')
++            : $this->aviso('PIX_CHAVE vazia: a opção "Enviar um Pix direto" não aparece para os convidados', 'defina PIX_CHAVE (e PIX_BENEFICIARIO) no .env');
++
++        filled(config('casamento.entrega.endereco'))
++            ? $this->ok('Endereço de entrega cadastrado (opção "Comprar o presente")')
++            : $this->aviso('ENDERECO_ENTREGA vazio: quem escolher "Comprar o presente" não saberá onde entregar', 'defina ENDERECO_ENTREGA no .env');
++
++        // 7) Produção
+         if (app()->isProduction()) {
+             config('app.debug')
+                 ? $this->erro('APP_DEBUG=true em produção expõe detalhes internos', 'APP_DEBUG=false')
+diff --git a/app/Http/Controllers/CarrinhoController.php b/app/Http/Controllers/CarrinhoController.php
+new file mode 100644
+index 0000000..8559a18
+--- /dev/null
++++ b/app/Http/Controllers/CarrinhoController.php
+@@ -0,0 +1,83 @@
++<?php
++
++namespace App\Http\Controllers;
++
++use App\Models\Presente;
++use App\Support\Carrinho;
++use Illuminate\Http\Request;
++
++class CarrinhoController extends Controller
++{
++    // Página "Minha lista": o resumo e as 3 formas de enviar.
++    public function mostrar()
++    {
++        $presentes = Presente::withSum('contribuicoesAtivas', 'quantidade_cotas')
++            ->whereIn('id', array_keys(Carrinho::itens()))->get()->keyBy('id');
++
++        $linhas = collect(Carrinho::itens())->map(function (int $cotas, int $id) use ($presentes) {
++            $presente = $presentes->get($id);
++
++            if (! $presente) {
++                return null; // o presente foi apagado pelos noivos
++            }
++
++            return [
++                'presente' => $presente,
++                'cotas' => $cotas,
++                'valor_centavos' => $presente->valor_cota_centavos * $cotas,
++                // alguém pode ter pegado as cotas enquanto a pessoa decidia
++                'indisponivel' => $cotas > $presente->cotas_restantes,
++            ];
++        })->filter()->values();
++
++        $total = $linhas->sum('valor_centavos');
++        $temIndisponivel = $linhas->contains('indisponivel', true);
++
++        // Cada forma só aparece habilitada quando faz sentido para ESTA lista.
++        $formas = [
++            'comprar' => [
++                'ativa' => $linhas->isNotEmpty() && $linhas->every(fn ($l) => $l['presente']->cotas_total === 1),
++                'motivo' => 'Disponível só para presentes inteiros (sem cotas). Para cotas, use uma das outras formas.',
++            ],
++            'stripe' => [
++                'ativa' => config('stripe.habilitado') && $total >= config('stripe.valor_minimo_centavos'),
++                'motivo' => config('stripe.habilitado')
++                    ? 'O valor mínimo para pagar online é R$ '.number_format(config('stripe.valor_minimo_centavos') / 100, 2, ',', '.').'.'
++                    : 'O pagamento online ainda não está disponível.',
++            ],
++            'pix' => [
++                'ativa' => filled(config('casamento.pix.chave')),
++                'motivo' => 'A chave Pix dos noivos ainda não foi cadastrada.',
++            ],
++        ];
++
++        return view('carrinho.mostrar', compact('linhas', 'total', 'formas', 'temIndisponivel'));
++    }
++
++    public function adicionar(Request $request, Presente $presente)
++    {
++        $restantes = $presente->cotas_restantes;
++
++        if ($restantes < 1) {
++            return redirect()->route('presentes.index')->with('erro', 'Esse presente já foi totalmente escolhido por outras pessoas.');
++        }
++
++        $dados = $request->validate([
++            'quantidade_cotas' => ['required', 'integer', 'min:1', 'max:'.$restantes],
++        ], [
++            'quantidade_cotas.max' => "Restam apenas {$restantes} cota(s) desse presente.",
++        ]);
++
++        Carrinho::adicionar($presente->id, $dados['quantidade_cotas']);
++
++        return redirect()->route('presentes.index')
++            ->with('mensagem', '"'.$presente->nome.'" foi para a sua lista. Escolha mais presentes ou finalize em "Minha lista".');
++    }
++
++    public function remover(Presente $presente)
++    {
++        Carrinho::remover($presente->id);
++
++        return redirect()->route('carrinho.mostrar')->with('mensagem', 'Presente removido da sua lista.');
++    }
++}
+diff --git a/app/Http/Controllers/ContribuicaoController.php b/app/Http/Controllers/ContribuicaoController.php
+deleted file mode 100644
+index 1f7f4c6..0000000
+--- a/app/Http/Controllers/ContribuicaoController.php
++++ /dev/null
+@@ -1,121 +0,0 @@
+-<?php
+-
+-namespace App\Http\Controllers;
+-
+-use App\Models\Contribuicao;
+-use App\Models\Convidado;
+-use App\Models\Presente;
+-use App\Services\StripeGateway;
+-use Illuminate\Http\Request;
+-use Illuminate\Support\Facades\DB;
+-use Illuminate\Support\Str;
+-use Illuminate\Validation\Rule;
+-use Stripe\Exception\ApiErrorException;
+-
+-class ContribuicaoController extends Controller
+-{
+-    // Painel dos noivos: rota protegida
+-    public function index()
+-    {
+-        $contribuicoes = Contribuicao::with(['presente', 'convidado'])->latest()->paginate(20);
+-
+-        return view('contribuicoes.index', compact('contribuicoes'));
+-    }
+-
+-    public function store(Request $request, Presente $presente, StripeGateway $stripe)
+-    {
+-        $convidadoId = session('convidado_id');
+-
+-        if ($convidadoId && ! Convidado::whereKey($convidadoId)->exists()) {
+-            session()->forget('convidado_id');
+-            $convidadoId = null;
+-        }
+-
+-        $dados = $request->validate([
+-            'quantidade_cotas' => ['required', 'integer', 'min:1', 'max:'.$presente->cotas_total],
+-            'mensagem' => ['nullable', 'string', 'max:400'],
+-            'nome' => [Rule::requiredIf($convidadoId === null), 'nullable', 'string', 'max:255'],
+-            'email' => [Rule::requiredIf($convidadoId === null), 'nullable', 'email', 'max:255'],
+-        ]);
+-
+-        if ($convidadoId === null) {
+-            $convidado = Convidado::firstOrCreate(
+-                ['email' => $dados['email']],
+-                ['nome' => $dados['nome']]
+-            );
+-            $convidadoId = $convidado->id;
+-            session(['convidado_id' => $convidadoId]);
+-        }
+-
+-        $online = config('stripe.habilitado');
+-
+-        // O preço NUNCA vem do formulário: sai do banco. (O exemplo do telecare multiplicava
+-        // o valor digitado pelo usuário, então qualquer um podia pagar o que quisesse.)
+-        $valorCentavos = $presente->valor_cota_centavos * $dados['quantidade_cotas'];
+-
+-        if ($online && $valorCentavos < config('stripe.valor_minimo_centavos')) {
+-            return redirect()->route('presentes.index')->with('erro', sprintf(
+-                'O valor mínimo para pagamento online é R$ %s.',
+-                number_format(config('stripe.valor_minimo_centavos') / 100, 2, ',', '.')
+-            ));
+-        }
+-
+-        $resultado = DB::transaction(function () use ($presente, $dados, $convidadoId, $online, $valorCentavos) {
+-            // Trava a linha do presente até o fim da transação: duas pessoas não passam juntas.
+-            $travado = Presente::whereKey($presente->id)->lockForUpdate()->firstOrFail();
+-
+-            $ocupadas = (int) $travado->contribuicoesAtivas()->sum('quantidade_cotas');
+-            $restantes = $travado->cotas_total - $ocupadas;
+-
+-            if ($dados['quantidade_cotas'] > $restantes) {
+-                return ['restantes' => $restantes];
+-            }
+-
+-            $contribuicao = $travado->contribuicoes()->create([
+-                'convidado_id'     => $convidadoId,
+-                'quantidade_cotas' => $dados['quantidade_cotas'],
+-                'mensagem'         => $dados['mensagem'] ?? null,
+-                'valor_centavos'   => $valorCentavos,
+-                'status'           => $online ? Contribuicao::PENDENTE : Contribuicao::RESERVADA,
+-                'token'            => (string) Str::uuid(),
+-                'expira_em'        => $online ? now()->addMinutes(config('stripe.minutos_reserva')) : null,
+-            ]);
+-
+-            return ['contribuicao' => $contribuicao];
+-        });
+-
+-        if (isset($resultado['restantes'])) {
+-            $restantes = $resultado['restantes'];
+-            $texto = $restantes === 0
+-                ? 'Esse presente acabou de ser totalmente escolhido por outras pessoas.'
+-                : "Restam apenas {$restantes} cota(s) desse presente. Escolha uma quantidade menor.";
+-
+-            return redirect()->route('presentes.index')->with('erro', $texto);
+-        }
+-
+-        /** @var Contribuicao $contribuicao */
+-        $contribuicao = $resultado['contribuicao'];
+-
+-        // Stripe desligado: comportamento antigo (a pessoa só reserva).
+-        if (! $online) {
+-            return redirect()->route('presentes.index')
+-                ->with('mensagem', 'Muito obrigado! Sua escolha foi registrada.');
+-        }
+-
+-        // A chamada ao Stripe fica FORA da transação: é uma requisição de rede (lenta) e não
+-        // deve segurar o bloqueio do banco enquanto espera.
+-        try {
+-            $sessao = $stripe->criarCheckout($contribuicao);
+-        } catch (ApiErrorException $e) {
+-            report($e); // vai para o log; o convidado não vê a mensagem técnica do Stripe
+-            $contribuicao->liberar(Contribuicao::FALHOU);
+-
+-            return redirect()->route('presentes.index')
+-                ->with('erro', 'Não foi possível iniciar o pagamento agora. Tente novamente em instantes.');
+-        }
+-
+-        $contribuicao->update(['stripe_session_id' => $sessao->id]);
+-
+-        return redirect()->away($sessao->url);
+-    }
+-}
+diff --git a/app/Http/Controllers/PagamentoController.php b/app/Http/Controllers/PagamentoController.php
+index c4230af..4b36af7 100644
+--- a/app/Http/Controllers/PagamentoController.php
++++ b/app/Http/Controllers/PagamentoController.php
+@@ -2,8 +2,9 @@
+ 
+ namespace App\Http\Controllers;
+ 
+-use App\Models\Contribuicao;
++use App\Models\Pedido;
+ use App\Services\StripeGateway;
++use App\Support\ConferenciaStripe;
+ use Illuminate\Http\Request;
+ use Illuminate\Support\Facades\Log;
+ use Stripe\Exception\ApiErrorException;
+@@ -11,43 +12,21 @@
+ 
+ class PagamentoController extends Controller
+ {
+-    // Para onde o Stripe devolve a pessoa depois de pagar.
+-    // ATENÇÃO: estar nesta página NÃO prova que pagou (qualquer um digita a URL).
+-    // Por isso perguntamos ao Stripe, com a nossa chave secreta, qual é a situação real.
+-    public function sucesso(string $token, StripeGateway $stripe)
+-    {
+-        $contribuicao = Contribuicao::where('token', $token)->with('presente')->firstOrFail();
+-
+-        if ($contribuicao->status === Contribuicao::PENDENTE && $contribuicao->stripe_session_id) {
+-            try {
+-                $sessao = $stripe->buscarCheckout($contribuicao->stripe_session_id);
+-
+-                if ($sessao->payment_status === 'paid' && $this->valorConfere($contribuicao, $sessao)) {
+-                    $contribuicao->marcarComoPaga($this->paymentIntentId($sessao));
+-                }
+-            } catch (ApiErrorException $e) {
+-                report($e); // sem problema: o webhook confirma depois
+-            }
+-        }
+-
+-        return view('pagamento.sucesso', compact('contribuicao'));
+-    }
+-
+     // A pessoa clicou em "voltar" na página do Stripe: fecha a sessão e devolve as cotas na hora.
+     public function cancelado(string $token, StripeGateway $stripe)
+     {
+-        $contribuicao = Contribuicao::where('token', $token)->firstOrFail();
++        $pedido = Pedido::where('token', $token)->where('forma', Pedido::FORMA_STRIPE)->firstOrFail();
+ 
+-        if ($contribuicao->status === Contribuicao::PENDENTE) {
+-            if ($contribuicao->stripe_session_id) {
++        if ($pedido->status === Pedido::PENDENTE) {
++            if ($pedido->stripe_session_id) {
+                 try {
+-                    $stripe->expirarCheckout($contribuicao->stripe_session_id);
++                    $stripe->expirarCheckout($pedido->stripe_session_id);
+                 } catch (ApiErrorException $e) {
+                     report($e);
+                 }
+             }
+ 
+-            $contribuicao->liberar(Contribuicao::CANCELADA);
++            $pedido->liberar(Pedido::CANCELADA);
+         }
+ 
+         return redirect()->route('presentes.index')
+@@ -72,9 +51,11 @@ public function webhook(Request $request, StripeGateway $stripe)
+         }
+ 
+         $sessao = $evento->data->object;
+-        $contribuicao = Contribuicao::find($sessao->client_reference_id ?? null);
+ 
+-        if (! $contribuicao) {
++        // Só pedidos da forma "stripe": o Pix manual e o "comprar" nunca são confirmados por aqui.
++        $pedido = Pedido::where('forma', Pedido::FORMA_STRIPE)->find($sessao->client_reference_id ?? null);
++
++        if (! $pedido) {
+             // Evento de outra coisa (ou de outro sistema na mesma conta Stripe). Responde 200 para
+             // o Stripe não ficar reenviando.
+             return response('ignorado', 200);
+@@ -84,70 +65,50 @@ public function webhook(Request $request, StripeGateway $stripe)
+             case 'checkout.session.completed':
+                 // Cartão: já vem "paid". Pix/boleto: vem "unpaid" e o aviso de pagamento chega depois.
+                 if ($sessao->payment_status === 'paid') {
+-                    $this->confirmar($contribuicao, $sessao);
++                    $this->confirmar($pedido, $sessao);
+                 }
+                 break;
+ 
+             case 'checkout.session.async_payment_succeeded':
+-                $this->confirmar($contribuicao, $sessao);
++                $this->confirmar($pedido, $sessao);
+                 break;
+ 
+             case 'checkout.session.async_payment_failed':
+-                $contribuicao->liberar(Contribuicao::FALHOU);
++                $pedido->liberar(Pedido::FALHOU);
+                 break;
+ 
+             case 'checkout.session.expired':
+-                $contribuicao->liberar(Contribuicao::EXPIRADA);
++                $pedido->liberar(Pedido::EXPIRADA);
+                 break;
+         }
+ 
+         return response('ok', 200);
+     }
+ 
+-    private function confirmar(Contribuicao $contribuicao, $sessao): void
++    private function confirmar(Pedido $pedido, $sessao): void
+     {
+         // Confere se o valor pago é o valor que nós calculamos. Se não for, não marca como paga.
+-        if (! $this->valorConfere($contribuicao, $sessao)) {
++        if (! ConferenciaStripe::valorConfere($pedido, $sessao)) {
+             Log::critical('Stripe: valor pago diferente do esperado. Conferir no painel do Stripe.', [
+-                'contribuicao_id' => $contribuicao->id,
+-                'esperado' => $contribuicao->valor_centavos,
++                'pedido_id' => $pedido->id,
++                'esperado' => $pedido->total_centavos,
+                 'recebido' => $sessao->amount_total ?? null,
+             ]);
+ 
+             return;
+         }
+ 
+-        $estavaLiberada = in_array($contribuicao->status, [
+-            Contribuicao::EXPIRADA, Contribuicao::CANCELADA, Contribuicao::FALHOU,
+-        ], true);
++        $estavaLiberado = in_array($pedido->status, [Pedido::EXPIRADA, Pedido::CANCELADA, Pedido::FALHOU], true);
+ 
+-        $contribuicao->marcarComoPaga($this->paymentIntentId($sessao));
++        $pedido->confirmar(ConferenciaStripe::paymentIntentId($sessao));
+ 
+         // Pagou DEPOIS de as cotas terem sido liberadas (ex.: Pix pago após o prazo). O dinheiro
+-        // entrou, então a contribuição vale; mas se outra pessoa já pegou as cotas, falta presente.
+-        if ($estavaLiberada) {
+-            $presente = $contribuicao->presente()->first();
+-            $ocupadas = (int) $presente->contribuicoesAtivas()->sum('quantidade_cotas');
+-
+-            if ($ocupadas > $presente->cotas_total) {
+-                Log::critical('Stripe: pagamento recebido depois das cotas serem liberadas, e o presente ficou acima do limite. Avaliar reembolso.', [
+-                    'contribuicao_id' => $contribuicao->id,
+-                    'presente_id' => $presente->id,
+-                ]);
+-            }
++        // entrou, então o pedido vale; mas se outra pessoa já pegou as cotas, falta presente.
++        if ($estavaLiberado && $pedido->presentesAcimaDoLimite()->isNotEmpty()) {
++            Log::critical('Stripe: pagamento recebido depois das cotas serem liberadas, e um presente ficou acima do limite. Avaliar reembolso.', [
++                'pedido_id' => $pedido->id,
++                'presentes' => $pedido->presentesAcimaDoLimite()->pluck('id'),
++            ]);
+         }
+     }
+-
+-    private function valorConfere(Contribuicao $contribuicao, $sessao): bool
+-    {
+-        return (int) ($sessao->amount_total ?? -1) === (int) $contribuicao->valor_centavos
+-            && strtolower((string) ($sessao->currency ?? '')) === 'brl';
+-    }
+-
+-    private function paymentIntentId($sessao): ?string
+-    {
+-        $pi = $sessao->payment_intent ?? null;
+-
+-        return is_object($pi) ? $pi->id : $pi;
+-    }
+ }
+diff --git a/app/Http/Controllers/PainelController.php b/app/Http/Controllers/PainelController.php
+index 7f1ecda..d3515a6 100644
+--- a/app/Http/Controllers/PainelController.php
++++ b/app/Http/Controllers/PainelController.php
+@@ -4,6 +4,7 @@
+ 
+ use App\Models\Contribuicao;
+ use App\Models\Convidado;
++use App\Models\Pedido;
+ 
+ class PainelController extends Controller
+ {
+@@ -20,17 +21,19 @@ public function index()
+             'adultos'     => $adultos,
+             'criancas'    => $criancas,
+             'pessoas'     => $adultos + $criancas,
+-            // "Escolhidas" = pagas + reservadas sem pagamento. Pendentes ainda não contam como presente dado.
+-            'cotas'       => (int) Contribuicao::whereIn('status', [Contribuicao::PAGA, Contribuicao::RESERVADA])->sum('quantidade_cotas'),
+-            'presentes'   => Contribuicao::whereIn('status', [Contribuicao::PAGA, Contribuicao::RESERVADA])->distinct()->count('presente_id'),
+-            // Dinheiro de verdade: só o que o Stripe confirmou. Guardado em centavos (inteiro).
++            // "Escolhidos" = pagos + reservados/entregues ("comprar"). Pendentes ainda não contam como presente dado.
++            'cotas'       => (int) Contribuicao::whereIn('status', Contribuicao::ESCOLHIDOS)->sum('quantidade_cotas'),
++            'presentes'   => Contribuicao::whereIn('status', Contribuicao::ESCOLHIDOS)->distinct()->count('presente_id'),
++            // Dinheiro de verdade: só o que foi CONFIRMADO (Stripe, ou Pix conferido por vocês). Em centavos.
+             'recebido'    => Contribuicao::where('status', Contribuicao::PAGA)->sum('valor_centavos') / 100,
+-            'reservado'   => Contribuicao::where('status', Contribuicao::RESERVADA)->sum('valor_centavos') / 100,
+-            'aguardando'  => Contribuicao::ocupandoCota()->where('status', Contribuicao::PENDENTE)->count(),
++            // Stripe ou Pix esperando o dinheiro, ainda dentro do prazo.
++            'aguardando'  => Pedido::where('status', Pedido::PENDENTE)->where('expira_em', '>', now())->count(),
++            // "Comprar o presente": reservados que ainda não chegaram.
++            'para_receber' => Pedido::where('forma', Pedido::FORMA_COMPRAR)->where('status', Pedido::RESERVADA)->count(),
+         ];
+ 
+-        $recentes = Contribuicao::with(['presente', 'convidado'])
+-            ->whereIn('status', [Contribuicao::PAGA, Contribuicao::RESERVADA])
++        $recentes = Contribuicao::with(['presente', 'convidado', 'pedido'])
++            ->whereIn('status', Contribuicao::ESCOLHIDOS)
+             ->latest()->take(5)->get();
+ 
+         return view('painel.index', compact('stats', 'recentes'));
+diff --git a/app/Http/Controllers/PedidoAdminController.php b/app/Http/Controllers/PedidoAdminController.php
+new file mode 100644
+index 0000000..31788b9
+--- /dev/null
++++ b/app/Http/Controllers/PedidoAdminController.php
+@@ -0,0 +1,60 @@
++<?php
++
++namespace App\Http\Controllers;
++
++use App\Models\Pedido;
++
++// Painel dos noivos: acompanhar os pedidos e resolver o que é manual (Pix e "comprar").
++class PedidoAdminController extends Controller
++{
++    public function index()
++    {
++        $pedidos = Pedido::with(['convidado', 'itens.presente'])->latest()->paginate(20);
++
++        return view('pedidos.index', compact('pedidos'));
++    }
++
++    // Os noivos viram o Pix na conta e conferem aqui. Só vale para a forma "pix".
++    public function confirmar(Pedido $pedido)
++    {
++        if ($pedido->forma !== Pedido::FORMA_PIX || $pedido->status === Pedido::PAGA) {
++            return back()->with('erro', 'Só dá para confirmar manualmente um Pix que ainda não foi confirmado.');
++        }
++
++        $pedido->confirmar();
++
++        // Pix que chegou depois de o prazo vencer: as cotas podem ter sido pegas por outra pessoa.
++        $acima = $pedido->presentesAcimaDoLimite();
++
++        if ($acima->isNotEmpty()) {
++            return back()->with('erro', 'Pix confirmado, mas ATENÇÃO: o prazo tinha vencido e outra pessoa já escolheu as cotas de "'
++                .$acima->pluck('nome')->implode('", "').'". Esse presente ficou com mais cotas do que existem. Combine com os convidados.');
++        }
++
++        return back()->with('mensagem', 'Pix confirmado. Obrigado ao convidado!');
++    }
++
++    // Desistência: o Pix não veio ou a pessoa não vai entregar. Devolve as cotas.
++    public function cancelar(Pedido $pedido)
++    {
++        if (! in_array($pedido->forma, [Pedido::FORMA_PIX, Pedido::FORMA_COMPRAR], true)) {
++            return back()->with('erro', 'Pedidos pagos pelo Stripe expiram sozinhos.');
++        }
++
++        if (! $pedido->liberar(Pedido::CANCELADA, [Pedido::PENDENTE, Pedido::RESERVADA])) {
++            return back()->with('erro', 'Esse pedido não pode mais ser cancelado.');
++        }
++
++        return back()->with('mensagem', 'Pedido cancelado. As cotas voltaram para a lista.');
++    }
++
++    // "Comprar o presente": o presente chegou.
++    public function entregar(Pedido $pedido)
++    {
++        if ($pedido->forma !== Pedido::FORMA_COMPRAR || ! $pedido->entregar()) {
++            return back()->with('erro', 'Só dá para marcar como recebido um presente reservado.');
++        }
++
++        return back()->with('mensagem', 'Presente marcado como recebido!');
++    }
++}
+diff --git a/app/Http/Controllers/PedidoController.php b/app/Http/Controllers/PedidoController.php
+new file mode 100644
+index 0000000..2733f06
+--- /dev/null
++++ b/app/Http/Controllers/PedidoController.php
+@@ -0,0 +1,181 @@
++<?php
++
++namespace App\Http\Controllers;
++
++use App\Models\Contribuicao;
++use App\Models\Convidado;
++use App\Models\Pedido;
++use App\Models\Presente;
++use App\Services\StripeGateway;
++use App\Support\Carrinho;
++use App\Support\ConferenciaStripe;
++use Illuminate\Http\Request;
++use Illuminate\Support\Facades\DB;
++use Illuminate\Support\Str;
++use Illuminate\Validation\Rule;
++use Stripe\Exception\ApiErrorException;
++
++class PedidoController extends Controller
++{
++    // O convidado escolheu a forma na página "Minha lista" e clicou em finalizar.
++    public function store(Request $request, StripeGateway $stripe)
++    {
++        $itens = Carrinho::itens();
++
++        if (empty($itens)) {
++            return redirect()->route('presentes.index')->with('erro', 'Sua lista está vazia. Escolha um presente primeiro.');
++        }
++
++        $convidadoId = session('convidado_id');
++
++        if ($convidadoId && ! Convidado::whereKey($convidadoId)->exists()) {
++            session()->forget('convidado_id');
++            $convidadoId = null;
++        }
++
++        $dados = $request->validate([
++            'forma' => ['required', Rule::in([Pedido::FORMA_STRIPE, Pedido::FORMA_PIX, Pedido::FORMA_COMPRAR])],
++            'mensagem' => ['nullable', 'string', 'max:400'],
++            'nome' => [Rule::requiredIf($convidadoId === null), 'nullable', 'string', 'max:255'],
++            'email' => [Rule::requiredIf($convidadoId === null), 'nullable', 'email', 'max:255'],
++        ], [
++            'forma.required' => 'Escolha como você quer enviar o presente.',
++        ]);
++
++        $forma = $dados['forma'];
++
++        // Os presentes e o valor vêm do BANCO. O formulário só diz a forma, a mensagem e quem é a pessoa.
++        $presentes = Presente::whereIn('id', array_keys($itens))->get()->keyBy('id');
++
++        if ($presentes->count() !== count($itens)) {
++            foreach (array_diff(array_keys($itens), $presentes->keys()->all()) as $sumido) {
++                Carrinho::remover($sumido);
++            }
++
++            return redirect()->route('carrinho.mostrar')->with('erro', 'Um dos presentes da sua lista não existe mais e foi removido. Confira e finalize de novo.');
++        }
++
++        $total = collect($itens)->sum(fn ($cotas, $id) => $presentes[$id]->valor_cota_centavos * $cotas);
++
++        // A forma escolhida precisa ser permitida para ESTA lista (a tela já esconde, mas aqui é a garantia).
++        $recusa = match (true) {
++            $forma === Pedido::FORMA_STRIPE && ! config('stripe.habilitado') => 'O pagamento online ainda não está disponível.',
++            $forma === Pedido::FORMA_STRIPE && $total < config('stripe.valor_minimo_centavos') => sprintf(
++                'O valor mínimo para pagar online é R$ %s.', number_format(config('stripe.valor_minimo_centavos') / 100, 2, ',', '.')
++            ),
++            $forma === Pedido::FORMA_PIX && blank(config('casamento.pix.chave')) => 'A chave Pix dos noivos ainda não foi cadastrada.',
++            $forma === Pedido::FORMA_COMPRAR && $presentes->contains(fn ($p) => $p->cotas_total !== 1) => 'Comprar o presente só vale para presentes inteiros, sem cotas.',
++            default => null,
++        };
++
++        if ($recusa) {
++            return redirect()->route('carrinho.mostrar')->with('erro', $recusa);
++        }
++
++        if ($convidadoId === null) {
++            $convidadoId = Convidado::firstOrCreate(['email' => $dados['email']], ['nome' => $dados['nome']])->id;
++            session(['convidado_id' => $convidadoId]);
++        }
++
++        $resultado = DB::transaction(function () use ($itens, $forma, $dados, $convidadoId, $total) {
++            // Trava os presentes na MESMA ordem sempre (por id): duas pessoas com listas parecidas
++            // não ficam esperando uma pela outra (deadlock).
++            $travados = Presente::whereIn('id', array_keys($itens))->orderBy('id')->lockForUpdate()->get();
++
++            foreach ($travados as $presente) {
++                $restantes = $presente->cotas_total - (int) $presente->contribuicoesAtivas()->sum('quantidade_cotas');
++
++                if ($itens[$presente->id] > $restantes) {
++                    return ['conflito' => $presente->nome, 'restantes' => $restantes];
++                }
++            }
++
++            $status = $forma === Pedido::FORMA_COMPRAR ? Pedido::RESERVADA : Pedido::PENDENTE;
++            $expiraEm = match ($forma) {
++                Pedido::FORMA_STRIPE => now()->addMinutes(config('stripe.minutos_reserva')),
++                Pedido::FORMA_PIX => now()->addHours(config('casamento.pix.horas_reserva')),
++                default => null, // comprar: fica reservado até os noivos cancelarem ou receberem
++            };
++
++            $pedido = Pedido::create([
++                'convidado_id' => $convidadoId,
++                'forma' => $forma,
++                'status' => $status,
++                'total_centavos' => $total,
++                'token' => (string) Str::uuid(),
++                'codigo' => Pedido::gerarCodigo(),
++                'mensagem' => $dados['mensagem'] ?? null,
++                'expira_em' => $expiraEm,
++            ]);
++
++            foreach ($travados as $presente) {
++                $pedido->itens()->create([
++                    'presente_id' => $presente->id,
++                    'convidado_id' => $convidadoId,
++                    'quantidade_cotas' => $itens[$presente->id],
++                    'valor_centavos' => $presente->valor_cota_centavos * $itens[$presente->id],
++                    'status' => $status,
++                    'expira_em' => $expiraEm,
++                ]);
++            }
++
++            return ['pedido' => $pedido];
++        });
++
++        if (isset($resultado['conflito'])) {
++            $r = $resultado['restantes'];
++
++            return redirect()->route('carrinho.mostrar')->with('erro', $r === 0
++                ? '"'.$resultado['conflito'].'" acabou de ser totalmente escolhido por outras pessoas. Tire-o da lista para continuar.'
++                : 'Restam apenas '.$r.' cota(s) de "'.$resultado['conflito'].'". Ajuste a quantidade e tente de novo.');
++        }
++
++        /** @var Pedido $pedido */
++        $pedido = $resultado['pedido'];
++
++        if ($forma !== Pedido::FORMA_STRIPE) {
++            Carrinho::limpar();
++
++            return redirect()->route('pedido.mostrar', $pedido->token);
++        }
++
++        // A chamada ao Stripe fica FORA da transação: é uma requisição de rede (lenta) e não
++        // deve segurar o bloqueio do banco enquanto espera.
++        try {
++            $sessao = $stripe->criarCheckout($pedido);
++        } catch (ApiErrorException $e) {
++            report($e); // vai para o log; o convidado não vê a mensagem técnica do Stripe
++            $pedido->liberar(Pedido::FALHOU);
++
++            return redirect()->route('carrinho.mostrar')
++                ->with('erro', 'Não foi possível iniciar o pagamento agora. Tente de novo em instantes ou escolha outra forma de enviar.');
++        }
++
++        $pedido->update(['stripe_session_id' => $sessao->id]);
++        Carrinho::limpar();
++
++        return redirect()->away($sessao->url);
++    }
++
++    // Página do pedido: instruções do Pix, confirmação da compra, ou o retorno do Stripe.
++    // ATENÇÃO: estar nesta página NÃO prova que pagou (qualquer um digita a URL). Para o Stripe,
++    // perguntamos a ele, com a nossa chave secreta, qual é a situação real.
++    public function mostrar(string $token, StripeGateway $stripe)
++    {
++        $pedido = Pedido::where('token', $token)->with('itens.presente')->firstOrFail();
++
++        if ($pedido->forma === Pedido::FORMA_STRIPE && $pedido->status === Pedido::PENDENTE && $pedido->stripe_session_id) {
++            try {
++                $sessao = $stripe->buscarCheckout($pedido->stripe_session_id);
++
++                if ($sessao->payment_status === 'paid' && ConferenciaStripe::valorConfere($pedido, $sessao)) {
++                    $pedido->confirmar(ConferenciaStripe::paymentIntentId($sessao));
++                }
++            } catch (ApiErrorException $e) {
++                report($e); // sem problema: o webhook confirma depois
++            }
++        }
++
++        return view('pedido.mostrar', compact('pedido'));
++    }
++}
+diff --git a/app/Models/Contribuicao.php b/app/Models/Contribuicao.php
+index bc6faab..2d691e6 100644
+--- a/app/Models/Contribuicao.php
++++ b/app/Models/Contribuicao.php
+@@ -9,29 +9,34 @@
+ 
+ class Contribuicao extends Model
+ {
+-    public const PENDENTE = 'pendente';
+-    public const PAGA = 'paga';
+-    public const RESERVADA = 'reservada';
+-    public const EXPIRADA = 'expirada';
+-    public const CANCELADA = 'cancelada';
+-    public const FALHOU = 'falhou';
++    public const PENDENTE = Pedido::PENDENTE;
++    public const PAGA = Pedido::PAGA;
++    public const RESERVADA = Pedido::RESERVADA;
++    public const ENTREGUE = Pedido::ENTREGUE;
++
++    // Já são presentes de verdade (dinheiro confirmado, ou comprado e reservado/entregue).
++    public const ESCOLHIDOS = [self::PAGA, self::RESERVADA, self::ENTREGUE];
+ 
+     // Obrigatório: sem isto o Laravel procuraria a tabela "contribuicaos"
+     // (ele pluraliza em inglês).
+     protected $table = 'contribuicoes';
+ 
++    // Uma contribuição é UMA LINHA do pedido: este presente, esta quantidade de cotas.
++    // A forma de envio, o token, o Stripe e o pagamento ficam no Pedido.
++    // O status e o expira_em são copiados para cá só para a regra "cota ocupada" ser uma consulta simples.
+     protected $fillable = [
+-        'presente_id', 'convidado_id', 'quantidade_cotas', 'mensagem',
+-        'status', 'valor_centavos', 'token', 'stripe_session_id',
+-        'stripe_payment_intent_id', 'expira_em', 'pago_em',
++        'pedido_id', 'presente_id', 'convidado_id', 'quantidade_cotas', 'mensagem',
++        'status', 'valor_centavos', 'expira_em',
+     ];
+ 
+     protected function casts(): array
+     {
+-        return [
+-            'expira_em' => 'datetime',
+-            'pago_em'   => 'datetime',
+-        ];
++        return ['expira_em' => 'datetime'];
++    }
++
++    public function pedido(): BelongsTo
++    {
++        return $this->belongsTo(Pedido::class);
+     }
+ 
+     public function presente(): BelongsTo
+@@ -44,61 +49,21 @@ public function convidado(): BelongsTo
+         return $this->belongsTo(Convidado::class);
+     }
+ 
+-    // Contribuições que OCUPAM cotas: pagas, reservadas sem pagamento, ou pendentes
++    // Contribuições que OCUPAM cotas: pagas, reservadas/entregues (comprar), ou pendentes
+     // que ainda estão dentro do prazo. Pendente vencida não segura nada.
+     // Este é o ÚNICO lugar que define "cota ocupada": todo o resto reaproveita.
+     public function scopeOcupandoCota(Builder $query): Builder
+     {
+         return $query->where(function (Builder $q) {
+-            $q->whereIn('status', [self::PAGA, self::RESERVADA])
++            $q->whereIn('status', self::ESCOLHIDOS)
+               ->orWhere(function (Builder $q) {
+                   $q->where('status', self::PENDENTE)->where('expira_em', '>', now());
+               });
+         });
+     }
+ 
+-    // "pendente" com prazo vencido é, na prática, expirada (mesmo que o Stripe ainda não tenha avisado).
+-    protected function statusEfetivo(): Attribute
+-    {
+-        return Attribute::get(fn () => $this->status === self::PENDENTE && $this->expira_em?->isPast()
+-            ? self::EXPIRADA
+-            : $this->status);
+-    }
+-
+     protected function valorReais(): Attribute
+     {
+         return Attribute::get(fn () => $this->valor_centavos === null ? null : $this->valor_centavos / 100);
+     }
+-
+-    // ---------- Transições de estado ----------
+-    // Cada uma é UM update condicional: o próprio banco decide quem "ganha" se dois avisos
+-    // chegarem ao mesmo tempo, e repetir o mesmo aviso não faz nada (idempotente).
+-
+-    /** Confirma o pagamento. Aceita vir de qualquer estado exceto "paga": dinheiro recebido é dinheiro recebido. */
+-    public function marcarComoPaga(?string $paymentIntentId): bool
+-    {
+-        $linhas = static::whereKey($this->id)
+-            ->where('status', '!=', self::PAGA)
+-            ->update([
+-                'status'                   => self::PAGA,
+-                'pago_em'                  => now(),
+-                'stripe_payment_intent_id' => $paymentIntentId,
+-            ]);
+-
+-        $this->refresh();
+-
+-        return $linhas === 1;
+-    }
+-
+-    /** Libera as cotas. Só mexe em quem ainda está pendente: nunca desfaz um pagamento já confirmado. */
+-    public function liberar(string $novoStatus): bool
+-    {
+-        $linhas = static::whereKey($this->id)
+-            ->where('status', self::PENDENTE)
+-            ->update(['status' => $novoStatus]);
+-
+-        $this->refresh();
+-
+-        return $linhas === 1;
+-    }
+ }
+diff --git a/app/Models/Pedido.php b/app/Models/Pedido.php
+new file mode 100644
+index 0000000..8ac87c2
+--- /dev/null
++++ b/app/Models/Pedido.php
+@@ -0,0 +1,139 @@
++<?php
++
++namespace App\Models;
++
++use Illuminate\Database\Eloquent\Casts\Attribute;
++use Illuminate\Database\Eloquent\Model;
++use Illuminate\Database\Eloquent\Relations\BelongsTo;
++use Illuminate\Database\Eloquent\Relations\HasMany;
++use Illuminate\Support\Collection;
++use Illuminate\Support\Facades\DB;
++
++// Um pedido = a escolha de um convidado: 1 ou mais presentes, enviados de UMA forma:
++//   stripe  -> paga online (cartão, ou Pix na página do Stripe)
++//   pix     -> manda o Pix direto para a chave dos noivos; os noivos confirmam à mão
++//   comprar -> compra o presente numa loja e entrega; só fica reservado
++class Pedido extends Model
++{
++    public const FORMA_STRIPE = 'stripe';
++    public const FORMA_PIX = 'pix';
++    public const FORMA_COMPRAR = 'comprar';
++
++    public const PENDENTE = 'pendente';     // stripe/pix aguardando o dinheiro (segura as cotas até expira_em)
++    public const PAGA = 'paga';             // dinheiro confirmado
++    public const RESERVADA = 'reservada';   // "comprar": reservado, ainda não chegou
++    public const ENTREGUE = 'entregue';     // "comprar": os noivos receberam
++    public const EXPIRADA = 'expirada';
++    public const CANCELADA = 'cancelada';
++    public const FALHOU = 'falhou';
++
++    protected $fillable = [
++        'convidado_id', 'forma', 'status', 'total_centavos', 'token', 'codigo', 'mensagem',
++        'stripe_session_id', 'stripe_payment_intent_id', 'expira_em', 'pago_em',
++    ];
++
++    protected function casts(): array
++    {
++        return ['expira_em' => 'datetime', 'pago_em' => 'datetime'];
++    }
++
++    // Código curto para o convidado escrever na mensagem do Pix e os noivos acharem no extrato.
++    // Sem 0/O/1/I, que se confundem ao ler.
++    public static function gerarCodigo(): string
++    {
++        do {
++            $codigo = substr(str_shuffle('ABCDEFGHJKLMNPQRSTUVWXYZ23456789'), 0, 6);
++        } while (static::where('codigo', $codigo)->exists());
++
++        return $codigo;
++    }
++
++    public function itens(): HasMany
++    {
++        return $this->hasMany(Contribuicao::class);
++    }
++
++    public function convidado(): BelongsTo
++    {
++        return $this->belongsTo(Convidado::class);
++    }
++
++    // "pendente" com prazo vencido é, na prática, expirada (mesmo antes de alguém avisar).
++    protected function statusEfetivo(): Attribute
++    {
++        return Attribute::get(fn () => $this->status === self::PENDENTE && $this->expira_em?->isPast()
++            ? self::EXPIRADA
++            : $this->status);
++    }
++
++    protected function totalReais(): Attribute
++    {
++        return Attribute::get(fn () => $this->total_centavos / 100);
++    }
++
++    // ---------- Transições de estado ----------
++    // Cada uma é UM update condicional (o banco decide quem "ganha" se dois avisos chegarem juntos)
++    // e leva os itens junto, dentro de uma transação. Repetir o mesmo aviso não faz nada.
++
++    /** Dinheiro confirmado (Stripe ou Pix conferido pelos noivos). Aceita vir de qualquer estado exceto "paga". */
++    public function confirmar(?string $paymentIntentId = null): bool
++    {
++        return DB::transaction(function () use ($paymentIntentId) {
++            $linhas = static::whereKey($this->id)
++                ->whereNotIn('status', [self::PAGA])
++                ->update([
++                    'status' => self::PAGA,
++                    'pago_em' => now(),
++                    'stripe_payment_intent_id' => $paymentIntentId ?? $this->stripe_payment_intent_id,
++                ]);
++
++            if ($linhas === 1) {
++                $this->itens()->update(['status' => self::PAGA]);
++            }
++
++            $this->refresh();
++
++            return $linhas === 1;
++        });
++    }
++
++    /** Devolve as cotas. Por padrão só mexe em quem ainda está pendente: nunca desfaz pagamento confirmado. */
++    public function liberar(string $novoStatus, array $de = [self::PENDENTE]): bool
++    {
++        return DB::transaction(function () use ($novoStatus, $de) {
++            $linhas = static::whereKey($this->id)->whereIn('status', $de)->update(['status' => $novoStatus]);
++
++            if ($linhas === 1) {
++                $this->itens()->update(['status' => $novoStatus]);
++            }
++
++            $this->refresh();
++
++            return $linhas === 1;
++        });
++    }
++
++    /** "Comprar": os noivos receberam o presente. */
++    public function entregar(): bool
++    {
++        return DB::transaction(function () {
++            $linhas = static::whereKey($this->id)->where('status', self::RESERVADA)->update(['status' => self::ENTREGUE]);
++
++            if ($linhas === 1) {
++                $this->itens()->update(['status' => self::ENTREGUE]);
++            }
++
++            $this->refresh();
++
++            return $linhas === 1;
++        });
++    }
++
++    /** Presentes deste pedido que ficaram com mais cotas ocupadas do que o total (pagamento tardio). */
++    public function presentesAcimaDoLimite(): Collection
++    {
++        return $this->itens()->with('presente')->get()
++            ->pluck('presente')->unique('id')
++            ->filter(fn (Presente $p) => (int) $p->contribuicoesAtivas()->sum('quantidade_cotas') > $p->cotas_total);
++    }
++}
+diff --git a/app/Services/StripeGateway.php b/app/Services/StripeGateway.php
+index c3bec20..2df3e4d 100644
+--- a/app/Services/StripeGateway.php
++++ b/app/Services/StripeGateway.php
+@@ -2,7 +2,7 @@
+ 
+ namespace App\Services;
+ 
+-use App\Models\Contribuicao;
++use App\Models\Pedido;
+ use Stripe\Checkout\Session;
+ use Stripe\Event;
+ use Stripe\StripeClient;
+@@ -20,43 +20,49 @@ private function cliente(): StripeClient
+         return $this->cliente ??= new StripeClient(config('stripe.sk'));
+     }
+ 
+-    /** Cria a página de pagamento (Checkout) no Stripe para esta contribuição. */
+-    public function criarCheckout(Contribuicao $contribuicao): Session
++    /** Cria a página de pagamento (Checkout) no Stripe para este pedido: uma linha por presente. */
++    public function criarCheckout(Pedido $pedido): Session
+     {
+-        $presente = $contribuicao->presente;
++        // loadMissing: usa o que já veio carregado e só consulta o banco o que faltar.
++        $pedido->loadMissing('itens.presente', 'convidado');
++
++        $linhas = $pedido->itens->map(fn ($item) => [
++            'quantity' => $item->quantidade_cotas,
++            'price_data' => [
++                'currency' => 'brl',
++                // Tudo calculado AQUI no servidor, a partir do banco. Nunca do formulário.
++                'unit_amount' => intdiv($item->valor_centavos, $item->quantidade_cotas),
++                'product_data' => [
++                    'name' => $item->presente->cotas_total > 1 ? $item->presente->nome.' (cota)' : $item->presente->nome,
++                ],
++            ],
++        ])->all();
+ 
+         $parametros = [
+             'mode' => 'payment',
+-            'line_items' => [[
+-                'quantity' => $contribuicao->quantidade_cotas,
+-                'price_data' => [
+-                    'currency' => 'brl',
+-                    // Tudo calculado AQUI no servidor, a partir do banco. Nunca do formulário.
+-                    'unit_amount' => intdiv($contribuicao->valor_centavos, $contribuicao->quantidade_cotas),
+-                    'product_data' => [
+-                        'name' => $presente->cotas_total > 1 ? $presente->nome.' (cota)' : $presente->nome,
+-                    ],
+-                ],
+-            ]],
+-            // Amarram o pagamento à nossa contribuição: é assim que o webhook sabe de quem é.
+-            'client_reference_id' => (string) $contribuicao->id,
+-            'metadata' => ['contribuicao_id' => (string) $contribuicao->id],
+-            'payment_intent_data' => ['metadata' => ['contribuicao_id' => (string) $contribuicao->id]],
+-            'expires_at' => $contribuicao->expira_em->timestamp,
++            'line_items' => $linhas,
++            // Amarram o pagamento ao NOSSO pedido: é assim que o webhook sabe de quem é.
++            'client_reference_id' => (string) $pedido->id,
++            'metadata' => ['pedido_id' => (string) $pedido->id, 'codigo' => $pedido->codigo],
++            'payment_intent_data' => [
++                'description' => 'Presentes de casamento (pedido '.$pedido->codigo.')',
++                'metadata' => ['pedido_id' => (string) $pedido->id, 'codigo' => $pedido->codigo],
++            ],
++            'expires_at' => $pedido->expira_em->timestamp,
+             'locale' => 'pt-BR',
+-            'success_url' => route('pagamento.sucesso', $contribuicao->token),
+-            'cancel_url' => route('pagamento.cancelado', $contribuicao->token),
++            'success_url' => route('pagamento.sucesso', $pedido->token),
++            'cancel_url' => route('pagamento.cancelado', $pedido->token),
+         ];
+ 
+         // Só envia o e-mail se existir. O SDK transforma null em "customer_email=" (vazio),
+         // e o Stripe pode recusar a sessão por e-mail inválido.
+-        if (filled($contribuicao->convidado?->email)) {
+-            $parametros['customer_email'] = $contribuicao->convidado->email;
++        if (filled($pedido->convidado?->email)) {
++            $parametros['customer_email'] = $pedido->convidado->email;
+         }
+ 
+         return $this->cliente()->checkout->sessions->create($parametros, [
+             // Se a requisição for repetida (queda de rede, duplo clique), o Stripe devolve a MESMA sessão.
+-            'idempotency_key' => 'contribuicao-'.$contribuicao->id,
++            'idempotency_key' => 'pedido-'.$pedido->id,
+         ]);
+     }
+ 
+diff --git a/app/Support/Carrinho.php b/app/Support/Carrinho.php
+new file mode 100644
+index 0000000..df38ec5
+--- /dev/null
++++ b/app/Support/Carrinho.php
+@@ -0,0 +1,40 @@
++<?php
++
++namespace App\Support;
++
++// A "lista" do convidado enquanto ele escolhe: presente_id => quantidade de cotas.
++// Fica na sessão (não vai para o banco): só vira dado de verdade quando ele finaliza o pedido.
++class Carrinho
++{
++    private const CHAVE = 'carrinho';
++
++    /** @return array<int,int> */
++    public static function itens(): array
++    {
++        return session(self::CHAVE, []);
++    }
++
++    public static function adicionar(int $presenteId, int $cotas): void
++    {
++        $itens = self::itens();
++        $itens[$presenteId] = $cotas;          // escolher de novo troca a quantidade
++        session([self::CHAVE => $itens]);
++    }
++
++    public static function remover(int $presenteId): void
++    {
++        $itens = self::itens();
++        unset($itens[$presenteId]);
++        session([self::CHAVE => $itens]);
++    }
++
++    public static function limpar(): void
++    {
++        session()->forget(self::CHAVE);
++    }
++
++    public static function quantidade(): int
++    {
++        return count(self::itens());
++    }
++}
+diff --git a/app/Support/ConferenciaStripe.php b/app/Support/ConferenciaStripe.php
+new file mode 100644
+index 0000000..d46d095
+--- /dev/null
++++ b/app/Support/ConferenciaStripe.php
+@@ -0,0 +1,23 @@
++<?php
++
++namespace App\Support;
++
++use App\Models\Pedido;
++
++// Conferências que o webhook e a página de retorno fazem sobre uma sessão do Stripe.
++class ConferenciaStripe
++{
++    /** O valor e a moeda pagos são os que NÓS calculamos? Se não forem, não confirma. */
++    public static function valorConfere(Pedido $pedido, $sessao): bool
++    {
++        return (int) ($sessao->amount_total ?? -1) === (int) $pedido->total_centavos
++            && strtolower((string) ($sessao->currency ?? '')) === 'brl';
++    }
++
++    public static function paymentIntentId($sessao): ?string
++    {
++        $pi = $sessao->payment_intent ?? null;
++
++        return is_object($pi) ? $pi->id : $pi;
++    }
++}
+diff --git a/config/casamento.php b/config/casamento.php
+new file mode 100644
+index 0000000..c9d5887
+--- /dev/null
++++ b/config/casamento.php
+@@ -0,0 +1,16 @@
++<?php
++
++return [
++    // Forma "Enviar Pix direto para os noivos". Sem a chave, essa opção não aparece para o convidado.
++    'pix' => [
++        'chave'         => env('PIX_CHAVE'),
++        'beneficiario'  => env('PIX_BENEFICIARIO'),
++        // Quantas horas as cotas ficam seguradas esperando o Pix (os noivos confirmam à mão).
++        'horas_reserva' => max(1, (int) env('PIX_HORAS_RESERVA', 48)),
++    ],
++
++    // Forma "Comprar o presente": para onde o convidado leva ou envia a compra.
++    'entrega' => [
++        'endereco' => env('ENDERECO_ENTREGA'),
++    ],
++];
+diff --git a/database/migrations/2026_11_07_100000_create_pedidos_e_formas_de_envio.php b/database/migrations/2026_11_07_100000_create_pedidos_e_formas_de_envio.php
+new file mode 100644
+index 0000000..f66c976
+--- /dev/null
++++ b/database/migrations/2026_11_07_100000_create_pedidos_e_formas_de_envio.php
+@@ -0,0 +1,91 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\DB;
++use Illuminate\Support\Facades\Schema;
++use Illuminate\Support\Str;
++
++return new class extends Migration
++{
++    public function up(): void
++    {
++        // Um PEDIDO é a escolha de um convidado: 1 ou mais presentes enviados de UMA forma só.
++        Schema::create('pedidos', function (Blueprint $table) {
++            $table->id();
++            $table->foreignId('convidado_id')->nullable()->constrained('convidados')->nullOnDelete();
++            $table->string('forma', 10);                       // stripe | pix | comprar
++            $table->string('status', 20)->default('pendente')->index();
++            $table->unsignedInteger('total_centavos')->default(0);
++            $table->uuid('token')->unique();                   // vai nas URLs do convidado (não expõe o id)
++            $table->string('codigo', 8)->unique();             // referência curta, para achar o Pix no extrato
++            $table->text('mensagem')->nullable();
++            $table->string('stripe_session_id')->nullable()->unique();
++            $table->string('stripe_payment_intent_id')->nullable();
++            $table->timestamp('expira_em')->nullable();
++            $table->timestamp('pago_em')->nullable();
++            $table->timestamps();
++        });
++
++        Schema::table('contribuicoes', function (Blueprint $table) {
++            $table->foreignId('pedido_id')->nullable()->after('id')->constrained('pedidos')->cascadeOnDelete();
++        });
++
++        // Dados que já existiam: cada contribuição antiga vira um pedido de 1 item.
++        foreach (DB::table('contribuicoes')->get() as $c) {
++            $pedidoId = DB::table('pedidos')->insertGetId([
++                'convidado_id' => $c->convidado_id,
++                // "reservada" era a escolha SEM pagamento: é a forma "comprar" de agora
++                'forma' => $c->status === 'reservada' ? 'comprar' : 'stripe',
++                'status' => $c->status,
++                'total_centavos' => (int) $c->valor_centavos,
++                'token' => $c->token ?: (string) Str::uuid(),
++                'codigo' => $this->codigoUnico(),
++                'mensagem' => $c->mensagem,
++                'stripe_session_id' => $c->stripe_session_id,
++                'stripe_payment_intent_id' => $c->stripe_payment_intent_id,
++                'expira_em' => $c->expira_em,
++                'pago_em' => $c->pago_em,
++                'created_at' => $c->created_at,
++                'updated_at' => $c->updated_at,
++            ]);
++
++            DB::table('contribuicoes')->where('id', $c->id)->update(['pedido_id' => $pedidoId]);
++        }
++
++        // Esses campos agora vivem no pedido.
++        Schema::table('contribuicoes', function (Blueprint $table) {
++            $table->dropUnique(['token']);
++            $table->dropUnique(['stripe_session_id']);
++        });
++        Schema::table('contribuicoes', function (Blueprint $table) {
++            $table->dropColumn(['token', 'stripe_session_id', 'stripe_payment_intent_id', 'pago_em']);
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::table('contribuicoes', function (Blueprint $table) {
++            $table->uuid('token')->nullable()->unique();
++            $table->string('stripe_session_id')->nullable()->unique();
++            $table->string('stripe_payment_intent_id')->nullable();
++            $table->timestamp('pago_em')->nullable();
++        });
++
++        Schema::table('contribuicoes', function (Blueprint $table) {
++            $table->dropConstrainedForeignId('pedido_id');
++        });
++
++        Schema::dropIfExists('pedidos');
++    }
++
++    private function codigoUnico(): string
++    {
++        do {
++            // sem 0/O/1/I para não confundir ao ler ou digitar
++            $codigo = substr(str_shuffle('ABCDEFGHJKLMNPQRSTUVWXYZ23456789'), 0, 6);
++        } while (DB::table('pedidos')->where('codigo', $codigo)->exists());
++
++        return $codigo;
++    }
++};
+diff --git a/public/css/site.css b/public/css/site.css
+index f4ced05..0b5e5cf 100644
+--- a/public/css/site.css
++++ b/public/css/site.css
+@@ -212,3 +212,9 @@ .secao-item { background: #fff; border: 1px solid #e8e2d9; border-radius: 14px;
+ .secao-item.escondida { opacity: .6; background: #faf8f4; }
+ .secao-item .ordem { font-family: var(--fonte-titulo); font-size: 1.8rem; color: var(--ouro); width: 2rem; text-align: center; }
+ .foto-miniatura { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; }
++
++/* ---------- 10) "Minha lista": as 3 formas de enviar ---------- */
++.opcao-envio { border: 1px solid var(--ouro-claro); border-radius: 12px; padding: .9rem 1rem; margin-bottom: .75rem; }
++.opcao-envio:has(input:checked) { border-color: var(--ouro-escuro); background: var(--creme); }
++.opcao-envio.desativada { opacity: .6; background: #f8f8f8; }
++.nav-lista { color: var(--ouro-escuro) !important; }
+diff --git a/resources/views/carrinho/mostrar.blade.php b/resources/views/carrinho/mostrar.blade.php
+new file mode 100644
+index 0000000..4a9ebca
+--- /dev/null
++++ b/resources/views/carrinho/mostrar.blade.php
+@@ -0,0 +1,104 @@
++@extends('layouts.app')
++
++@section('title', 'Minha lista')
++
++@section('content')
++<div class="pagina">
++    <div class="container" style="max-width: 860px;">
++        <h1 class="mb-2">Minha lista</h1>
++
++        @if ($errors->any())
++            <div class="alert alert-danger" role="alert">
++                <ul class="mb-0">@foreach ($errors->all() as $erro)<li>{{ $erro }}</li>@endforeach</ul>
++            </div>
++        @endif
++
++        @if ($linhas->isEmpty())
++            <p class="text-center text-muted my-5">Sua lista está vazia.</p>
++            <p class="text-center"><a href="{{ route('presentes.index') }}" class="btn btn-ouro">Escolher presentes</a></p>
++        @else
++            <p class="text-center text-muted mb-4">Confira os presentes e escolha como quer enviá-los.</p>
++
++            <div class="cartao-form mb-4">
++                <table class="table align-middle mb-0">
++                    <thead><tr><th>Presente</th><th class="text-center">Cotas</th><th class="text-end">Valor</th><th></th></tr></thead>
++                    <tbody>
++                        @foreach ($linhas as $l)
++                            <tr>
++                                <td>
++                                    {{ $l['presente']->nome }}
++                                    @if ($l['indisponivel'])
++                                        <div class="small text-danger">Restam só {{ $l['presente']->cotas_restantes }} cota(s). Ajuste na lista de presentes ou tire da lista.</div>
++                                    @endif
++                                </td>
++                                <td class="text-center">{{ $l['cotas'] }}</td>
++                                <td class="text-end">R$ {{ number_format($l['valor_centavos'] / 100, 2, ',', '.') }}</td>
++                                <td class="text-end">
++                                    <form method="POST" action="{{ route('carrinho.remover', $l['presente']) }}">
++                                        @csrf @method('DELETE')
++                                        <button class="btn btn-link btn-sm text-danger p-0" type="submit">Tirar</button>
++                                    </form>
++                                </td>
++                            </tr>
++                        @endforeach
++                    </tbody>
++                    <tfoot>
++                        <tr><th colspan="2" class="text-end">Total</th><th class="text-end">R$ {{ number_format($total / 100, 2, ',', '.') }}</th><th></th></tr>
++                    </tfoot>
++                </table>
++                <div class="mt-3"><a href="{{ route('presentes.index') }}">← Escolher mais presentes</a></div>
++            </div>
++
++            <form method="POST" action="{{ route('pedido.store') }}" class="cartao-form">
++                @csrf
++                <h2 class="h4 mb-3">Como você quer enviar?</h2>
++
++                @php
++                    $opcoes = [
++                        'comprar' => ['Comprar o presente', 'Você mesmo compra na loja que preferir e entrega aos noivos. Nós reservamos o presente para ninguém comprar o mesmo.'],
++                        'stripe' => ['Pagar online (cartão ou Pix)', 'Você paga na página segura do Stripe e os noivos compram depois. Se o Pix estiver ativo, o QR Code aparece lá. Não guardamos dados do cartão.'],
++                        'pix' => ['Enviar um Pix direto para os noivos', 'Mostramos a chave Pix e o valor exato. Os noivos confirmam quando o dinheiro chegar.'],
++                    ];
++                    $marcada = old('forma') ?: collect($opcoes)->keys()->first(fn ($k) => $formas[$k]['ativa']);
++                @endphp
++
++                @foreach ($opcoes as $chave => [$titulo, $texto])
++                    <div class="opcao-envio {{ $formas[$chave]['ativa'] ? '' : 'desativada' }}">
++                        <div class="form-check">
++                            <input class="form-check-input" type="radio" name="forma" id="forma-{{ $chave }}" value="{{ $chave }}"
++                                @checked($marcada === $chave) @disabled(! $formas[$chave]['ativa'])>
++                            <label class="form-check-label" for="forma-{{ $chave }}">
++                                <strong>{{ $titulo }}</strong>
++                                <span class="d-block small text-muted">{{ $formas[$chave]['ativa'] ? $texto : $formas[$chave]['motivo'] }}</span>
++                            </label>
++                        </div>
++                    </div>
++                @endforeach
++
++                @unless (session('convidado_id'))
++                    <div class="row mt-3">
++                        <div class="col-md-6 mb-3">
++                            <label for="nome" class="form-label">Seu nome</label>
++                            <input type="text" id="nome" name="nome" class="form-control" required value="{{ old('nome') }}">
++                        </div>
++                        <div class="col-md-6 mb-3">
++                            <label for="email" class="form-label">Seu e-mail</label>
++                            <input type="email" id="email" name="email" class="form-control" required value="{{ old('email') }}">
++                        </div>
++                    </div>
++                @endunless
++
++                <div class="mb-3 mt-3">
++                    <label for="mensagem" class="form-label">Mensagem para os noivos (opcional)</label>
++                    <textarea id="mensagem" name="mensagem" class="form-control" rows="2" maxlength="400">{{ old('mensagem') }}</textarea>
++                </div>
++
++                <button type="submit" class="btn btn-ouro w-100" @disabled($temIndisponivel)>Finalizar</button>
++                @if ($temIndisponivel)
++                    <div class="form-text text-center text-danger">Resolva os avisos em vermelho acima para finalizar.</div>
++                @endif
++            </form>
++        @endif
++    </div>
++</div>
++@endsection
+diff --git a/resources/views/contribuicoes/index.blade.php b/resources/views/contribuicoes/index.blade.php
+deleted file mode 100644
+index 82bb905..0000000
+--- a/resources/views/contribuicoes/index.blade.php
++++ /dev/null
+@@ -1,44 +0,0 @@
+-@extends('layouts.admin')
+-
+-@section('title', 'Quem presenteou')
+-
+-@section('content')
+-<div class="py-2">
+-    <h1 class="mb-3">Quem presenteou</h1>
+-
+-    <table class="table table-striped align-middle">
+-        <thead>
+-            <tr><th>Quando</th><th>Convidado</th><th>Presente</th><th>Cotas</th><th>Valor</th><th>Situação</th><th>Mensagem</th></tr>
+-        </thead>
+-        <tbody>
+-            @forelse ($contribuicoes as $c)
+-                <tr>
+-                    <td>{{ $c->created_at->format('d/m/Y H:i') }}</td>
+-                    <td>{{ $c->convidado->nome ?? 'Convidado removido' }}</td>
+-                    <td>{{ $c->presente->nome }}</td>
+-                    <td>{{ $c->quantidade_cotas }}</td>
+-                    <td>{{ $c->valor_reais !== null ? 'R$ '.number_format($c->valor_reais, 2, ',', '.') : '—' }}</td>
+-                    <td>
+-                        @php
+-                            [$rotulo, $cor] = match ($c->status_efetivo) {
+-                                'paga'      => ['Paga', 'success'],
+-                                'pendente'  => ['Aguardando pagamento', 'warning text-dark'],
+-                                'reservada' => ['Reservada (sem pagamento)', 'info text-dark'],
+-                                'expirada'  => ['Expirada', 'secondary'],
+-                                'cancelada' => ['Cancelada', 'secondary'],
+-                                default     => ['Falhou', 'danger'],
+-                            };
+-                        @endphp
+-                        <span class="badge bg-{{ $cor }}">{{ $rotulo }}</span>
+-                    </td>
+-                    <td>{{ $c->mensagem }}</td>
+-                </tr>
+-            @empty
+-                <tr><td colspan="7">Nenhuma escolha ainda.</td></tr>
+-            @endforelse
+-        </tbody>
+-    </table>
+-
+-    {{ $contribuicoes->links() }}
+-</div>
+-@endsection
+\ No newline at end of file
+diff --git a/resources/views/layouts/admin.blade.php b/resources/views/layouts/admin.blade.php
+index 48a38b6..7521098 100644
+--- a/resources/views/layouts/admin.blade.php
++++ b/resources/views/layouts/admin.blade.php
+@@ -21,7 +21,7 @@
+             ['secoes.index', 'Página do convite', 'secoes.*'],
+             ['presentes.admin', 'Presentes', 'presentes.*'],
+             ['convidados.index', 'Convidados', 'convidados.*'],
+-            ['contribuicoes.index', 'Quem presenteou', 'contribuicoes.*'],
++            ['pedidos.index', 'Quem presenteou', 'pedidos.*'],
+             ['perfil.edit', 'Meu perfil', 'perfil.*'],
+         ];
+     @endphp
+diff --git a/resources/views/layouts/app.blade.php b/resources/views/layouts/app.blade.php
+index cd7363e..fff5358 100644
+--- a/resources/views/layouts/app.blade.php
++++ b/resources/views/layouts/app.blade.php
+@@ -44,6 +44,12 @@
+                         <a class="nav-link {{ request()->routeIs('rsvp.create') ? 'active' : '' }}"
+                             href="{{ route('rsvp.create') }}">Confirme sua presença</a>
+                     </li>
++                    @if (\App\Support\Carrinho::quantidade() > 0)
++                        <li class="nav-item">
++                            <a class="nav-link nav-lista {{ request()->routeIs('carrinho.mostrar') ? 'active' : '' }}"
++                                href="{{ route('carrinho.mostrar') }}">Minha lista ({{ \App\Support\Carrinho::quantidade() }})</a>
++                        </li>
++                    @endif
+                 </ul>
+             </div>
+         </div>
+diff --git a/resources/views/painel/index.blade.php b/resources/views/painel/index.blade.php
+index 95f5f83..779170f 100644
+--- a/resources/views/painel/index.blade.php
++++ b/resources/views/painel/index.blade.php
+@@ -15,8 +15,8 @@
+         ['Presentes com escolha', $stats['presentes']],
+         ['Cotas escolhidas', $stats['cotas']],
+         ['Valor recebido (pago)', 'R$ ' . number_format($stats['recebido'], 2, ',', '.')],
+-        ['Aguardando pagamento', $stats['aguardando']],
+-        ['Reservado sem pagamento', 'R$ ' . number_format($stats['reservado'], 2, ',', '.')],
++        ['Aguardando o dinheiro (Stripe ou Pix)', $stats['aguardando']],
++        ['Presentes comprados, para receber', $stats['para_receber']],
+     ];
+ @endphp
+ <div class="py-2">
+@@ -53,7 +53,7 @@
+                     <td>{{ $c->presente->nome }}</td>
+                     <td>{{ $c->convidado->nome ?? 'Convidado removido' }}</td>
+                     <td>{{ $c->quantidade_cotas }}</td>
+-                    <td>{{ $c->mensagem }}</td>
++                    <td>{{ $c->pedido->mensagem ?? $c->mensagem }}</td>
+                 </tr>
+             @empty
+                 <tr><td colspan="5">Nenhuma escolha ainda.</td></tr>
+diff --git a/resources/views/pedido/mostrar.blade.php b/resources/views/pedido/mostrar.blade.php
+new file mode 100644
+index 0000000..51a06f1
+--- /dev/null
++++ b/resources/views/pedido/mostrar.blade.php
+@@ -0,0 +1,94 @@
++@extends('layouts.app')
++
++@section('title', 'Seu pedido')
++
++@section('content')
++@php
++    $reais = fn ($centavos) => 'R$ '.number_format($centavos / 100, 2, ',', '.');
++    $status = $pedido->status_efetivo;
++@endphp
++<div class="pagina">
++    <div class="mx-auto px-3" style="max-width: 640px;">
++        <h1 class="mb-1">Seu pedido</h1>
++        <p class="text-center text-muted mb-4">Código <strong>{{ $pedido->codigo }}</strong></p>
++
++        <div class="cartao-form mb-4">
++            <ul class="list-unstyled mb-3">
++                @foreach ($pedido->itens as $item)
++                    <li class="d-flex justify-content-between py-1">
++                        <span>{{ $item->presente->nome }}@if ($item->presente->cotas_total > 1) · {{ $item->quantidade_cotas }} {{ $item->quantidade_cotas === 1 ? 'cota' : 'cotas' }}@endif</span>
++                        <span>{{ $reais($item->valor_centavos) }}</span>
++                    </li>
++                @endforeach
++            </ul>
++            <div class="d-flex justify-content-between border-top pt-2 fw-bold"><span>Total</span><span>{{ $reais($pedido->total_centavos) }}</span></div>
++        </div>
++
++        {{-- ---------- PAGA / ENTREGUE ---------- --}}
++        @if ($status === 'paga')
++            <div class="alert alert-success text-center"><strong>Pagamento confirmado.</strong> Muito obrigado pelo presente!</div>
++        @elseif ($status === 'entregue')
++            <div class="alert alert-success text-center"><strong>Presente recebido.</strong> Muito obrigado!</div>
++
++        {{-- ---------- COMPRAR ---------- --}}
++        @elseif ($status === 'reservada')
++            <div class="cartao-form">
++                <h2 class="h5">Reservado para você</h2>
++                <p>Nós seguramos {{ $pedido->itens->count() === 1 ? 'esse presente' : 'esses presentes' }} para ninguém comprar o mesmo. Agora é só comprar e entregar.</p>
++                @if (filled(config('casamento.entrega.endereco')))
++                    <p class="mb-1"><strong>Onde entregar:</strong></p>
++                    <p style="white-space: pre-line;">{{ config('casamento.entrega.endereco') }}</p>
++                @else
++                    <p class="text-muted">Combine a entrega com os noivos.</p>
++                @endif
++                @foreach ($pedido->itens as $item)
++                    @if ($item->presente->link)
++                        <p class="mb-1"><a href="{{ $item->presente->link }}" target="_blank" rel="noopener noreferrer">Ver "{{ $item->presente->nome }}" na loja</a></p>
++                    @endif
++                @endforeach
++                <p class="small text-muted mt-3 mb-0">Mudou de ideia? Avise os noivos e eles liberam o presente para outra pessoa.</p>
++            </div>
++
++        {{-- ---------- PIX DIRETO ---------- --}}
++        @elseif ($pedido->forma === 'pix' && $status === 'pendente')
++            <div class="cartao-form">
++                <h2 class="h5">Envie o Pix</h2>
++                <p class="mb-1">Valor exato: <strong>{{ $reais($pedido->total_centavos) }}</strong></p>
++                @if (filled(config('casamento.pix.beneficiario')))
++                    <p class="mb-1">Para: <strong>{{ config('casamento.pix.beneficiario') }}</strong></p>
++                @endif
++                <label for="chave-pix" class="form-label mt-2 mb-1">Chave Pix</label>
++                <div class="input-group mb-3">
++                    <input type="text" id="chave-pix" class="form-control" readonly value="{{ config('casamento.pix.chave') }}">
++                    <button type="button" class="btn btn-contorno" id="copiar-pix">Copiar</button>
++                </div>
++                <p class="small mb-1">Se o seu banco permitir, escreva este código na mensagem do Pix: <strong>{{ $pedido->codigo }}</strong>. Ajuda os noivos a achar o seu pagamento.</p>
++                <p class="small text-muted mb-0">Você não precisa avisar ninguém. Os noivos confirmam quando o dinheiro chegar. Seu pedido fica reservado até
++                    {{ $pedido->expira_em->format('d/m/Y \à\s H:i') }}.</p>
++            </div>
++            @push('scripts')
++                <script>
++                    document.getElementById('copiar-pix')?.addEventListener('click', async (e) => {
++                        const campo = document.getElementById('chave-pix');
++                        try { await navigator.clipboard.writeText(campo.value); } catch (_) { campo.select(); document.execCommand('copy'); }
++                        e.target.textContent = 'Copiado!';
++                    });
++                </script>
++            @endpush
++
++        {{-- ---------- STRIPE ---------- --}}
++        @elseif ($pedido->forma === 'stripe' && $status === 'pendente')
++            <div class="alert alert-warning text-center">
++                <strong>Estamos confirmando seu pagamento.</strong><br>
++                Costuma levar poucos segundos. <strong>Não precisa pagar de novo.</strong> Se pagou com Pix, pode demorar um pouco mais: atualize esta página em instantes.
++            </div>
++
++        {{-- ---------- EXPIRADO / CANCELADO / FALHOU ---------- --}}
++        @else
++            <div class="alert alert-secondary text-center">Este pedido não foi concluído e as cotas voltaram para a lista. Se você já enviou o dinheiro, fale com os noivos: eles conseguem confirmar.</div>
++        @endif
++
++        <p class="text-center mt-4"><a href="{{ route('presentes.index') }}" class="btn btn-ouro">Voltar para a lista de presentes</a></p>
++    </div>
++</div>
++@endsection
+diff --git a/resources/views/pedidos/index.blade.php b/resources/views/pedidos/index.blade.php
+new file mode 100644
+index 0000000..1fc5ac2
+--- /dev/null
++++ b/resources/views/pedidos/index.blade.php
+@@ -0,0 +1,72 @@
++@extends('layouts.admin')
++
++@section('title', 'Quem presenteou')
++
++@section('content')
++<div class="py-2">
++    <h1 class="mb-3">Quem presenteou</h1>
++
++    <div class="table-responsive">
++    <table class="table table-striped align-middle">
++        <thead>
++            <tr><th>Quando</th><th>Código</th><th>Convidado</th><th>Presentes</th><th>Total</th><th>Forma</th><th>Situação</th><th>Mensagem</th><th>Ações</th></tr>
++        </thead>
++        <tbody>
++            @forelse ($pedidos as $p)
++                @php
++                    $formaRotulo = ['stripe' => 'Pagamento online', 'pix' => 'Pix direto', 'comprar' => 'Comprar o presente'][$p->forma] ?? $p->forma;
++                    [$rotulo, $cor] = match ($p->status_efetivo) {
++                        'paga'      => ['Paga', 'success'],
++                        'pendente'  => [$p->forma === 'pix' ? 'Aguardando o Pix' : 'Aguardando pagamento', 'warning text-dark'],
++                        'reservada' => ['Reservado, falta chegar', 'info text-dark'],
++                        'entregue'  => ['Recebido', 'success'],
++                        'expirada'  => ['Expirada', 'secondary'],
++                        'cancelada' => ['Cancelada', 'secondary'],
++                        default     => ['Falhou', 'danger'],
++                    };
++                @endphp
++                <tr>
++                    <td>{{ $p->created_at->format('d/m/Y H:i') }}</td>
++                    <td><code>{{ $p->codigo }}</code></td>
++                    <td>{{ $p->convidado->nome ?? 'Convidado removido' }}</td>
++                    <td>
++                        @foreach ($p->itens as $i)
++                            <div>{{ $i->presente->nome }}@if ($i->presente->cotas_total > 1) <span class="text-muted">· {{ $i->quantidade_cotas }} cota(s)</span>@endif</div>
++                        @endforeach
++                    </td>
++                    <td>R$ {{ number_format($p->total_reais, 2, ',', '.') }}</td>
++                    <td>{{ $formaRotulo }}</td>
++                    <td><span class="badge bg-{{ $cor }}">{{ $rotulo }}</span></td>
++                    <td>{{ $p->mensagem }}</td>
++                    <td>
++                        <div class="d-flex flex-wrap gap-1">
++                            @if ($p->forma === 'pix' && $p->status !== 'paga')
++                                <form method="POST" action="{{ route('pedidos.confirmar', $p) }}"
++                                    onsubmit="return confirm('Confirmar que o Pix de R$ {{ number_format($p->total_reais, 2, ',', '.') }} chegou?')">
++                                    @csrf <button class="btn btn-success btn-sm" type="submit">Pix chegou</button>
++                                </form>
++                            @endif
++                            @if ($p->forma === 'comprar' && $p->status === 'reservada')
++                                <form method="POST" action="{{ route('pedidos.entregar', $p) }}">
++                                    @csrf <button class="btn btn-success btn-sm" type="submit">Recebi</button>
++                                </form>
++                            @endif
++                            @if (in_array($p->forma, ['pix', 'comprar']) && in_array($p->status, ['pendente', 'reservada']))
++                                <form method="POST" action="{{ route('pedidos.cancelar', $p) }}"
++                                    onsubmit="return confirm('Cancelar este pedido e devolver as cotas para a lista?')">
++                                    @csrf <button class="btn btn-outline-danger btn-sm" type="submit">Cancelar</button>
++                                </form>
++                            @endif
++                        </div>
++                    </td>
++                </tr>
++            @empty
++                <tr><td colspan="9">Nenhum pedido ainda.</td></tr>
++            @endforelse
++        </tbody>
++    </table>
++    </div>
++
++    {{ $pedidos->links() }}
++</div>
++@endsection
+diff --git a/resources/views/presentes/index.blade.php b/resources/views/presentes/index.blade.php
+index 5923a4c..d114368 100644
+--- a/resources/views/presentes/index.blade.php
++++ b/resources/views/presentes/index.blade.php
+@@ -6,9 +6,12 @@
+ <div class="pagina">
+     <div class="container">
+         <h1 class="mb-2">Lista de presentes</h1>
+-        <p class="text-center text-muted mb-4">Escolha um presente ou contribua com uma cota. Seu carinho já é o maior presente.</p>
+-        @if (config('stripe.habilitado'))
+-            <p class="text-center small text-muted mb-4">Depois de escolher, você será levado à página segura do Stripe para pagar.</p>
++        <p class="text-center text-muted mb-2">Escolha um ou mais presentes e junte tudo em <strong>Minha lista</strong>.</p>
++        <p class="text-center small text-muted mb-4">Depois você decide como enviar: comprando o presente, pagando online ou mandando um Pix.</p>
++        @if (\App\Support\Carrinho::quantidade() > 0)
++            <p class="text-center mb-4">
++                <a href="{{ route('carrinho.mostrar') }}" class="btn btn-ouro">Ver minha lista ({{ \App\Support\Carrinho::quantidade() }}) e finalizar</a>
++            </p>
+         @endif
+ 
+         @if ($errors->any())
+@@ -84,36 +87,28 @@
+                             @if ($presente->esgotado)
+                                 <span class="badge bg-secondary align-self-start mt-auto">Já escolhido</span>
+                             @else
+-                                <form method="POST" action="{{ route('presentes.contribuir', $presente) }}" class="mt-auto">
++                                <form method="POST" action="{{ route('carrinho.adicionar', $presente) }}" class="mt-auto">
+                                     @csrf
+ 
+-                                    @unless (session('convidado_id'))
+-                                        <input type="text" name="nome" class="form-control mb-2" placeholder="Seu nome" required>
+-                                        <input type="email" name="email" class="form-control mb-2" placeholder="Seu e-mail" required>
+-                                    @endunless
+-
+                                     @if ($presente->cotas_total > 1)
+                                         <select name="quantidade_cotas" class="form-select mb-2" aria-label="Quantidade de cotas">
+                                             @for ($i = 1; $i <= $presente->cotas_restantes; $i++)
+-                                                <option value="{{ $i }}">{{ $i }} {{ $i === 1 ? 'cota' : 'cotas' }}</option>
++                                                <option value="{{ $i }}" @selected((int) (\App\Support\Carrinho::itens()[$presente->id] ?? 1) === $i)>{{ $i }} {{ $i === 1 ? 'cota' : 'cotas' }}</option>
+                                             @endfor
+                                         </select>
+                                     @else
+                                         <input type="hidden" name="quantidade_cotas" value="1">
+                                     @endif
+ 
+-                                    <textarea name="mensagem" class="form-control mb-2" rows="2" maxlength="400"
+-                                        placeholder="Mensagem para os noivos (opcional)"></textarea>
++                                    @if (isset(\App\Support\Carrinho::itens()[$presente->id]))
++                                        <button type="submit" class="btn btn-contorno btn-sm w-100">Na sua lista · atualizar</button>
++                                    @else
++                                        <button type="submit" class="btn btn-ouro btn-sm w-100">Adicionar à minha lista</button>
++                                    @endif
+ 
+-                                    <button type="submit" class="btn btn-ouro btn-sm w-100">
+-                                        @if (config('stripe.habilitado'))
+-                                            {{ $presente->cotas_total > 1 ? 'Contribuir e pagar' : 'Presentear e pagar' }}
+-                                        @else
+-                                            {{ $presente->cotas_total > 1 ? 'Contribuir' : 'Escolher este presente' }}
+-                                        @endif
+-                                    </button>
+-                                    @if (config('stripe.habilitado'))
+-                                        <div class="form-text text-center mt-1">Pagamento seguro pelo Stripe. Não guardamos dados do cartão.</div>
++                                    @if ($presente->link)
++                                        <a href="{{ $presente->link }}" target="_blank" rel="noopener noreferrer"
++                                            class="d-block text-center small mt-2">Ver na loja</a>
+                                     @endif
+                                 </form>
+                             @endif
+diff --git a/routes/web.php b/routes/web.php
+index f74d057..e8dd9e5 100644
+--- a/routes/web.php
++++ b/routes/web.php
+@@ -1,10 +1,12 @@
+ <?php
+ 
+ use App\Http\Controllers\AuthController;
+-use App\Http\Controllers\ContribuicaoController;
++use App\Http\Controllers\CarrinhoController;
+ use App\Http\Controllers\ConvidadoController;
+ use App\Http\Controllers\HomeController;
+ use App\Http\Controllers\PagamentoController;
++use App\Http\Controllers\PedidoAdminController;
++use App\Http\Controllers\PedidoController;
+ use App\Http\Controllers\PainelController;
+ use App\Http\Controllers\PerfilController;
+ use App\Http\Controllers\PresenteController;
+@@ -62,19 +64,31 @@
+     Route::put('/presentes/{presente}', [PresenteController::class, 'update'])->name('presentes.update');
+     Route::delete('/presentes/{presente}', [PresenteController::class, 'destroy'])->name('presentes.destroy');
+ 
+-    Route::get('/contribuicoes', [ContribuicaoController::class, 'index'])->name('contribuicoes.index');
++    // Pedidos dos convidados (Quem presenteou) e o que é manual: confirmar Pix, cancelar, marcar como recebido
++    Route::get('/pedidos', [PedidoAdminController::class, 'index'])->name('pedidos.index');
++    Route::post('/pedidos/{pedido}/confirmar', [PedidoAdminController::class, 'confirmar'])->name('pedidos.confirmar');
++    Route::post('/pedidos/{pedido}/cancelar', [PedidoAdminController::class, 'cancelar'])->name('pedidos.cancelar');
++    Route::post('/pedidos/{pedido}/entregar', [PedidoAdminController::class, 'entregar'])->name('pedidos.entregar');
+ });
+ 
+ // ---------- Público de novo: lista de presentes (por último, de propósito) ----------
+ // O Laravel casa as rotas na ordem. Se /presentes/{presente} viesse antes de
+ // /presentes/create, a palavra "create" seria tratada como o id de um presente.
+ Route::get('/presentes', [PresenteController::class, 'index'])->name('presentes.index');
+-Route::post('/presentes/{presente}/contribuir', [ContribuicaoController::class, 'store'])
+-    ->middleware('throttle:rsvp')->name('presentes.contribuir');
++
++// "Minha lista": o convidado junta presentes e depois escolhe UMA forma de enviar todos
++Route::get('/carrinho', [CarrinhoController::class, 'mostrar'])->name('carrinho.mostrar');
++Route::post('/carrinho/adicionar/{presente}', [CarrinhoController::class, 'adicionar'])
++    ->middleware('throttle:rsvp')->name('carrinho.adicionar');
++Route::delete('/carrinho/{presente}', [CarrinhoController::class, 'remover'])->name('carrinho.remover');
++
++Route::post('/pedido', [PedidoController::class, 'store'])->middleware('throttle:rsvp')->name('pedido.store');
++// Duas portas para a mesma página: a do convidado (Pix, comprar) e a de retorno do Stripe.
++Route::get('/pedido/{token}', [PedidoController::class, 'mostrar'])->name('pedido.mostrar');
+ 
+ // ---------- Pagamento (Stripe) ----------
+ // Retorno do Checkout. O {token} é um UUID aleatório: identifica a compra sem expor o id.
+-Route::get('/pagamento/sucesso/{token}', [PagamentoController::class, 'sucesso'])->name('pagamento.sucesso');
++Route::get('/pagamento/sucesso/{token}', [PedidoController::class, 'mostrar'])->name('pagamento.sucesso');
+ Route::get('/pagamento/cancelado/{token}', [PagamentoController::class, 'cancelado'])->name('pagamento.cancelado');
+ 
+ // Quem chama é o servidor do Stripe (sem navegador, sem cookie, sem CSRF).
+diff --git a/tests/Feature/AmbienteTest.php b/tests/Feature/AmbienteTest.php
+index c882508..cd1ff37 100644
+--- a/tests/Feature/AmbienteTest.php
++++ b/tests/Feature/AmbienteTest.php
+@@ -59,4 +59,13 @@ public function test_verificar_passa_quando_o_essencial_esta_configurado(): void
+             ->expectsOutputToContain('1 noivo(s) cadastrado(s)')
+             ->assertSuccessful();
+     }
++
++    public function test_verificar_avisa_quando_faltam_pix_e_endereco_de_entrega(): void
++    {
++        config(['jwt.secret' => 'x', 'casamento.pix.chave' => null, 'casamento.entrega.endereco' => null]);
++
++        $this->artisan('casamento:verificar')
++            ->expectsOutputToContain('PIX_CHAVE vazia')
++            ->expectsOutputToContain('ENDERECO_ENTREGA vazio');
++    }
+ }
+diff --git a/tests/Feature/ContribuicaoTest.php b/tests/Feature/ContribuicaoTest.php
+deleted file mode 100644
+index 119acbd..0000000
+--- a/tests/Feature/ContribuicaoTest.php
++++ /dev/null
+@@ -1,60 +0,0 @@
+-<?php
+-
+-namespace Tests\Feature;
+-
+-use App\Models\Contribuicao;
+-use App\Models\Presente;
+-use Illuminate\Foundation\Testing\RefreshDatabase;
+-use Tests\TestCase;
+-
+-class ContribuicaoTest extends TestCase
+-{
+-    use RefreshDatabase;
+-
+-    private function envio(int $cotas): array
+-    {
+-        return [
+-            'quantidade_cotas' => $cotas,
+-            'nome'             => 'Ana',
+-            'email'            => 'ana@example.com',
+-            'mensagem'         => 'Parabéns!',
+-        ];
+-    }
+-
+-    public function test_contribui_dentro_do_limite(): void
+-    {
+-        $presente = Presente::factory()->create(['cotas_total' => 4]);
+-
+-        $this->post(route('presentes.contribuir', $presente), $this->envio(3))
+-            ->assertRedirect(route('presentes.index'))
+-            ->assertSessionHas('mensagem');
+-
+-        $this->assertDatabaseHas('contribuicoes', [
+-            'presente_id'      => $presente->id,
+-            'quantidade_cotas' => 3,
+-        ]);
+-        $this->assertSame(1, $presente->fresh()->cotas_restantes);
+-    }
+-
+-    public function test_nao_aceita_mais_cotas_do_que_restam(): void
+-    {
+-        $presente = Presente::factory()->create(['cotas_total' => 4]);
+-        Contribuicao::create(['presente_id' => $presente->id, 'quantidade_cotas' => 3, 'status' => 'paga']);
+-
+-        $this->post(route('presentes.contribuir', $presente), $this->envio(2))
+-            ->assertSessionHas('erro');
+-
+-        $this->assertSame(3, (int) Contribuicao::sum('quantidade_cotas'));
+-    }
+-
+-    public function test_presente_esgotado_nao_aceita_mais_nada(): void
+-    {
+-        $presente = Presente::factory()->create(['cotas_total' => 1]);
+-        Contribuicao::create(['presente_id' => $presente->id, 'quantidade_cotas' => 1, 'status' => 'paga']);
+-
+-        $this->post(route('presentes.contribuir', $presente), $this->envio(1))
+-            ->assertSessionHas('erro');
+-
+-        $this->assertDatabaseCount('contribuicoes', 1);
+-    }
+-}
+\ No newline at end of file
+diff --git a/tests/Feature/PainelTest.php b/tests/Feature/PainelTest.php
+index 03603ce..8b98449 100644
+--- a/tests/Feature/PainelTest.php
++++ b/tests/Feature/PainelTest.php
+@@ -51,7 +51,7 @@ public function test_todas_as_telas_do_painel_abrem(): void
+         foreach ([
+             route('painel'), route('perfil.edit'), route('secoes.index'), route('secoes.create'),
+             route('convidados.index'), route('convidados.create'), route('convidados.show', $c), route('convidados.edit', $c),
+-            route('presentes.admin'), route('presentes.create'), route('presentes.edit', $p), route('contribuicoes.index'),
++            route('presentes.admin'), route('presentes.create'), route('presentes.edit', $p), route('pedidos.index'),
+         ] as $url) {
+             $this->get($url)->assertOk();
+         }
+diff --git a/tests/Feature/PedidoFluxoTest.php b/tests/Feature/PedidoFluxoTest.php
+new file mode 100644
+index 0000000..2c8a4be
+--- /dev/null
++++ b/tests/Feature/PedidoFluxoTest.php
+@@ -0,0 +1,417 @@
++<?php
++
++namespace Tests\Feature;
++
++use App\Models\Contribuicao;
++use App\Models\Convidado;
++use App\Models\Pedido;
++use App\Models\Presente;
++use App\Models\User;
++use Illuminate\Foundation\Testing\RefreshDatabase;
++use Illuminate\Support\Str;
++use Tests\TestCase;
++
++// "Minha lista" e as 3 formas de enviar: comprar, pagar online (Stripe, coberto em StripePagamentoTest) e Pix direto.
++class PedidoFluxoTest extends TestCase
++{
++    use RefreshDatabase;
++
++    protected function setUp(): void
++    {
++        parent::setUp();
++
++        config([
++            'stripe.habilitado' => false,
++            'casamento.pix.chave' => 'noivos@pix.example',
++            'casamento.pix.beneficiario' => 'Victor e Kamilly',
++            'casamento.pix.horas_reserva' => 48,
++            'casamento.entrega.endereco' => "Rua das Flores, 10\nPresidente Prudente",
++        ]);
++    }
++
++    private function naLista(Presente $presente, int $cotas = 1)
++    {
++        return $this->post(route('carrinho.adicionar', $presente), ['quantidade_cotas' => $cotas]);
++    }
++
++    private function finalizar(string $forma, array $extra = [])
++    {
++        return $this->post(route('pedido.store'), array_merge([
++            'forma' => $forma, 'nome' => 'Ana', 'email' => 'ana@example.com', 'mensagem' => 'Parabéns!',
++        ], $extra));
++    }
++
++    // ---------- Minha lista ----------
++
++    public function test_adicionar_poe_o_presente_na_lista_e_o_menu_mostra_a_contagem(): void
++    {
++        $p = Presente::factory()->create(['nome' => 'Jogo de panelas', 'cotas_total' => 1]);
++
++        $this->naLista($p)->assertRedirect(route('presentes.index'))->assertSessionHas('mensagem');
++
++        $this->get(route('carrinho.mostrar'))->assertOk()->assertSee('Jogo de panelas')->assertSee('Minha lista (1)');
++    }
++
++    public function test_nao_aceita_mais_cotas_do_que_restam(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 4]);
++
++        // a primeira pessoa finaliza 3 das 4 cotas (só o pedido finalizado segura cotas)
++        $this->naLista($p, 3);
++        $this->finalizar('pix');
++        $this->flushSession();
++
++        // a seguinte só consegue 1
++        $this->naLista($p, 2)->assertSessionHasErrors('quantidade_cotas');
++        $this->naLista($p, 1)->assertSessionHasNoErrors();
++    }
++
++    public function test_presente_esgotado_nao_entra_na_lista(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++        $this->finalizar('comprar');
++        $this->flushSession();
++
++        $this->naLista($p)->assertSessionHas('erro');
++        $this->get(route('carrinho.mostrar'))->assertDontSee('Minha lista (');
++    }
++
++    public function test_remover_tira_da_lista(): void
++    {
++        $p = Presente::factory()->create(['nome' => 'Liquidificador', 'cotas_total' => 1]);
++        $this->naLista($p);
++
++        $this->delete(route('carrinho.remover', $p))->assertRedirect(route('carrinho.mostrar'));
++
++        $this->get(route('carrinho.mostrar'))->assertSee('Sua lista está vazia');
++    }
++
++    public function test_lista_mostra_so_as_formas_que_valem_para_ela(): void
++    {
++        $inteiro = Presente::factory()->create(['cotas_total' => 1, 'valor' => 200]);
++        $cotas = Presente::factory()->create(['cotas_total' => 5, 'valor' => 500]);
++
++        // presente inteiro: comprar vale; Stripe desligado; Pix ligado
++        $this->naLista($inteiro);
++        $html = $this->get(route('carrinho.mostrar'))->assertOk()->getContent();
++        $this->assertStringNotContainsString('value="comprar" disabled', preg_replace('/\s+/', ' ', $html));
++        $this->assertMatchesRegularExpression('/value="stripe"[^>]*disabled/s', $html);
++        $this->assertDoesNotMatchRegularExpression('/value="pix"[^>]*disabled/s', $html);
++
++        // acrescenta um presente em cotas: "comprar" deixa de valer
++        $this->naLista($cotas, 2);
++        $html = $this->get(route('carrinho.mostrar'))->getContent();
++        $this->assertMatchesRegularExpression('/value="comprar"[^>]*disabled/s', $html);
++        $this->assertStringContainsString('Disponível só para presentes inteiros', $html);
++    }
++
++    public function test_sem_chave_pix_a_forma_pix_some(): void
++    {
++        config(['casamento.pix.chave' => null]);
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++
++        $this->get(route('carrinho.mostrar'))->assertSee('A chave Pix dos noivos ainda não foi cadastrada');
++        $this->finalizar('pix')->assertSessionHas('erro');
++        $this->assertDatabaseCount('pedidos', 0);
++    }
++
++    // ---------- 1) Comprar o presente ----------
++
++    public function test_comprar_reserva_o_presente_e_mostra_onde_entregar(): void
++    {
++        $p = Presente::factory()->create(['nome' => 'Jogo de panelas', 'cotas_total' => 1, 'link' => 'https://loja.example/panelas']);
++        $this->naLista($p);
++
++        $r = $this->finalizar('comprar');
++
++        $pedido = Pedido::firstOrFail();
++        $r->assertRedirect(route('pedido.mostrar', $pedido->token));
++        $this->assertSame('comprar', $pedido->forma);
++        $this->assertSame('reservada', $pedido->status);
++        $this->assertSame('reservada', $pedido->itens->first()->status);
++        $this->assertSame(0, $p->fresh()->cotas_restantes); // ninguém mais compra o mesmo
++
++        $this->get(route('pedido.mostrar', $pedido->token))
++            ->assertOk()->assertSee('Reservado para você')->assertSee('Rua das Flores, 10')->assertSee('loja.example/panelas');
++
++        $this->get(route('carrinho.mostrar'))->assertSee('Sua lista está vazia'); // a lista foi esvaziada
++    }
++
++    public function test_comprar_so_vale_para_presente_inteiro(): void
++    {
++        $cotas = Presente::factory()->create(['cotas_total' => 5]);
++        $this->naLista($cotas, 1);
++
++        $this->finalizar('comprar')->assertSessionHas('erro', 'Comprar o presente só vale para presentes inteiros, sem cotas.');
++
++        $this->assertDatabaseCount('pedidos', 0);
++    }
++
++    public function test_noivos_marcam_como_recebido_e_o_presente_continua_ocupado(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++        $this->finalizar('comprar');
++        $pedido = Pedido::firstOrFail();
++
++        $this->noivoLogado();
++        $this->post(route('pedidos.entregar', $pedido))->assertSessionHas('mensagem');
++
++        $this->assertSame('entregue', $pedido->fresh()->status);
++        $this->assertSame('entregue', $pedido->fresh()->itens->first()->status);
++        $this->assertSame(0, $p->fresh()->cotas_restantes);
++    }
++
++    public function test_noivos_cancelam_a_reserva_e_as_cotas_voltam(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++        $this->finalizar('comprar');
++        $pedido = Pedido::firstOrFail();
++
++        $this->noivoLogado();
++        $this->post(route('pedidos.cancelar', $pedido))->assertSessionHas('mensagem');
++
++        $this->assertSame('cancelada', $pedido->fresh()->status);
++        $this->assertSame(1, $p->fresh()->cotas_restantes);
++    }
++
++    // ---------- 3) Pix direto ----------
++
++    public function test_pix_cria_pedido_pendente_com_prazo_e_mostra_a_chave_o_valor_e_o_codigo(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 4, 'valor' => 400]);
++        $this->naLista($p, 3);
++
++        $r = $this->finalizar('pix');
++
++        $pedido = Pedido::firstOrFail();
++        $r->assertRedirect(route('pedido.mostrar', $pedido->token));
++        $this->assertSame('pix', $pedido->forma);
++        $this->assertSame('pendente', $pedido->status);
++        $this->assertSame(30000, $pedido->total_centavos);
++        $this->assertEqualsWithDelta(48 * 3600, now()->diffInSeconds($pedido->expira_em, false), 5);
++
++        $this->get(route('pedido.mostrar', $pedido->token))
++            ->assertOk()
++            ->assertSee('noivos@pix.example')
++            ->assertSee('R$ 300,00')
++            ->assertSee('Victor e Kamilly')
++            ->assertSee($pedido->codigo);
++    }
++
++    public function test_pix_nao_confirma_sozinho_e_a_pagina_nao_vira_paga_ao_visitar(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++        $this->finalizar('pix');
++        $pedido = Pedido::firstOrFail();
++
++        $this->get(route('pedido.mostrar', $pedido->token))->assertSee('Envie o Pix');
++        $this->get(route('pagamento.sucesso', $pedido->token))->assertSee('Envie o Pix'); // a URL do Stripe também não paga nada
++
++        $this->assertSame('pendente', $pedido->fresh()->status);
++    }
++
++    public function test_noivos_confirmam_o_pix_e_o_valor_entra_no_painel(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1, 'valor' => 250]);
++        $this->naLista($p);
++        $this->finalizar('pix');
++        $pedido = Pedido::firstOrFail();
++
++        $this->noivoLogado();
++        $this->post(route('pedidos.confirmar', $pedido))->assertSessionHas('mensagem');
++
++        $pedido->refresh();
++        $this->assertSame('paga', $pedido->status);
++        $this->assertSame('paga', $pedido->itens->first()->status);
++        $this->assertNotNull($pedido->pago_em);
++
++        $this->get(route('painel'))->assertSee('R$ 250,00');
++    }
++
++    public function test_confirmar_duas_vezes_nao_duplica(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++        $this->finalizar('pix');
++        $pedido = Pedido::firstOrFail();
++
++        $this->noivoLogado();
++        $this->post(route('pedidos.confirmar', $pedido))->assertSessionHas('mensagem');
++        $hora = $pedido->fresh()->pago_em;
++        $this->travel(5)->minutes();
++
++        $this->post(route('pedidos.confirmar', $pedido))->assertSessionHas('erro');
++        $this->assertEquals($hora, $pedido->fresh()->pago_em);
++    }
++
++    public function test_pix_vencido_libera_as_cotas_mas_os_noivos_ainda_podem_confirmar(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++        $this->finalizar('pix');
++        $pedido = Pedido::firstOrFail();
++
++        $this->travel(49)->hours(); // passou do prazo
++        $this->assertSame(1, $p->fresh()->cotas_restantes);
++        $this->assertSame('expirada', $pedido->fresh()->status_efetivo);
++
++        $this->noivoLogado();
++        $this->post(route('pedidos.confirmar', $pedido))->assertSessionHas('mensagem'); // o Pix chegou tarde, mas chegou
++
++        $this->assertSame('paga', $pedido->fresh()->status);
++        $this->assertSame(0, $p->fresh()->cotas_restantes);
++    }
++
++    public function test_pix_tardio_avisa_se_outra_pessoa_ja_pegou_as_cotas(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1, 'nome' => 'Cafeteira']);
++        $this->naLista($p);
++        $this->finalizar('pix');
++        $primeiro = Pedido::firstOrFail();
++
++        $this->travel(49)->hours();
++        $this->flushSession();
++        $this->naLista($p);                   // outra pessoa pega a cafeteira
++        $this->finalizar('comprar', ['email' => 'bia@example.com', 'nome' => 'Bia']);
++
++        $this->noivoLogado();
++        $this->post(route('pedidos.confirmar', $primeiro))
++            ->assertSessionHas('erro', fn ($msg) => str_contains($msg, 'Cafeteira') && str_contains($msg, 'mais cotas do que existem'));
++
++        $this->assertSame('paga', $primeiro->fresh()->status); // o dinheiro entrou: a confirmação vale
++    }
++
++    public function test_noivos_cancelam_um_pix_que_nao_veio(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 2]);
++        $this->naLista($p, 2);
++        $this->finalizar('pix');
++        $pedido = Pedido::firstOrFail();
++
++        $this->noivoLogado();
++        $this->post(route('pedidos.cancelar', $pedido))->assertSessionHas('mensagem');
++
++        $this->assertSame('cancelada', $pedido->fresh()->status);
++        $this->assertSame(2, $p->fresh()->cotas_restantes);
++    }
++
++    // ---------- várias seleções num pedido só ----------
++
++    public function test_varios_presentes_viram_um_unico_pedido_com_o_total_certo(): void
++    {
++        $a = Presente::factory()->create(['valor' => 100, 'cotas_total' => 1]);
++        $b = Presente::factory()->create(['valor' => 90, 'cotas_total' => 3]);
++        $this->naLista($a);
++        $this->naLista($b, 2);
++
++        $this->finalizar('pix');
++
++        $this->assertDatabaseCount('pedidos', 1);
++        $this->assertDatabaseCount('contribuicoes', 2);
++        $this->assertSame(16000, Pedido::first()->total_centavos);
++        $this->assertSame(0, $a->fresh()->cotas_restantes);
++        $this->assertSame(1, $b->fresh()->cotas_restantes);
++    }
++
++    public function test_se_alguem_pegou_as_cotas_enquanto_a_pessoa_decidia_nada_e_criado(): void
++    {
++        $a = Presente::factory()->create(['cotas_total' => 1, 'nome' => 'Panela']);
++        $b = Presente::factory()->create(['cotas_total' => 1, 'nome' => 'Cafeteira']);
++
++        // a primeira pessoa monta a lista com os dois e fica pensando
++        $this->naLista($a);
++        $this->naLista($b);
++        $listaDela = session('carrinho');
++        $this->flushSession();
++
++        // a segunda pessoa leva a cafeteira
++        $this->naLista($b);
++        $this->finalizar('comprar', ['email' => 'bia@example.com', 'nome' => 'Bia'])->assertRedirect();
++
++        // a primeira volta e tenta finalizar
++        $this->flushSession();
++        session(['carrinho' => $listaDela]);
++        $this->finalizar('pix')->assertRedirect(route('carrinho.mostrar'))->assertSessionHas('erro');
++
++        // tudo ou nada: nem a panela (que estava livre) foi reservada
++        $this->assertDatabaseCount('pedidos', 1);
++        $this->assertSame(1, $a->fresh()->cotas_restantes);
++    }
++
++    public function test_preco_e_situacao_vindos_do_formulario_sao_ignorados(): void
++    {
++        $p = Presente::factory()->create(['valor' => 300, 'cotas_total' => 1]);
++        $this->naLista($p);
++
++        $this->finalizar('pix', ['total_centavos' => 100, 'status' => 'paga']);
++
++        $pedido = Pedido::firstOrFail();
++        $this->assertSame(30000, $pedido->total_centavos);
++        $this->assertSame('pendente', $pedido->status);
++    }
++
++    public function test_forma_invalida_e_recusada(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++
++        $this->finalizar('cheque')->assertSessionHasErrors('forma');
++        $this->assertDatabaseCount('pedidos', 0);
++    }
++
++    public function test_lista_vazia_nao_finaliza(): void
++    {
++        $this->finalizar('pix')->assertRedirect(route('presentes.index'))->assertSessionHas('erro');
++    }
++
++    // ---------- quem pode mexer ----------
++
++    public function test_so_noivos_acessam_e_agem_nos_pedidos(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++        $this->finalizar('pix');
++        $pedido = Pedido::firstOrFail();
++        $this->flushSession();
++
++        $this->get(route('pedidos.index'))->assertRedirect('/login');
++        $this->post(route('pedidos.confirmar', $pedido))->assertRedirect('/login');
++
++        $this->actingAs(User::factory()->create(), 'api'); // existe, mas não é noivo
++        $this->post(route('pedidos.confirmar', $pedido))->assertForbidden();
++        $this->assertSame('pendente', $pedido->fresh()->status);
++    }
++
++    public function test_noivos_nao_confirmam_manualmente_pedido_que_nao_e_pix(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++        $this->finalizar('comprar');
++        $pedido = Pedido::firstOrFail();
++
++        $this->noivoLogado();
++        $this->post(route('pedidos.confirmar', $pedido))->assertSessionHas('erro');
++        $this->assertSame('reservada', $pedido->fresh()->status);
++    }
++
++    public function test_tela_de_pedidos_lista_forma_e_situacao(): void
++    {
++        $this->noivoLogado();
++        $p = Presente::factory()->create(['cotas_total' => 1, 'nome' => 'Aspirador']);
++        $this->naLista($p);
++        $this->finalizar('pix');
++
++        $this->get(route('pedidos.index'))
++            ->assertOk()->assertSee('Aspirador')->assertSee('Pix direto')->assertSee('Aguardando o Pix')->assertSee('Pix chegou');
++    }
++
++    public function test_pedido_com_token_inexistente_da_404(): void
++    {
++        $this->get(route('pedido.mostrar', (string) Str::uuid()))->assertNotFound();
++    }
++}
+diff --git a/tests/Feature/RotasProtegidasTest.php b/tests/Feature/RotasProtegidasTest.php
+index 9b46134..f2c239c 100644
+--- a/tests/Feature/RotasProtegidasTest.php
++++ b/tests/Feature/RotasProtegidasTest.php
+@@ -28,7 +28,7 @@ public function test_usuario_sem_registro_de_noivo_leva_403(): void
+ 
+     public function test_visitante_vai_para_o_login_em_todas_as_areas_dos_noivos(): void
+     {
+-        foreach (['/painel', '/perfil', '/secoes', '/convidados', '/presentes-admin', '/presentes/create', '/contribuicoes'] as $url) {
++        foreach (['/painel', '/perfil', '/secoes', '/convidados', '/presentes-admin', '/presentes/create', '/pedidos'] as $url) {
+             $this->get($url)->assertRedirect('/login');
+         }
+     }
+diff --git a/tests/Feature/StripeGatewayTest.php b/tests/Feature/StripeGatewayTest.php
+index 7415ac5..8bb4f7d 100644
+--- a/tests/Feature/StripeGatewayTest.php
++++ b/tests/Feature/StripeGatewayTest.php
+@@ -2,8 +2,9 @@
+ 
+ namespace Tests\Feature;
+ 
+-use App\Models\Contribuicao;
++use App\Models\Pedido;
+ use App\Models\Convidado;
++use App\Models\Contribuicao;
+ use App\Models\Presente;
+ use App\Services\StripeGateway;
+ use Tests\TestCase;
+@@ -38,21 +39,27 @@ protected function tearDown(): void
+         parent::tearDown();
+     }
+ 
+-    private function contribuicao(?string $email): Contribuicao
++    // Pedido montado só em memória (sem banco): 1 presente de 3 cotas (2 cotas) + 1 presente inteiro.
++    private function pedido(?string $email): Pedido
+     {
+-        $presente = new Presente(['nome' => 'Lua de mel', 'valor' => 100, 'cotas_total' => 3]);
+-        $c = new Contribuicao(['quantidade_cotas' => 2, 'valor_centavos' => 6666, 'token' => 'tok-123']);
+-        $c->id = 42;
+-        $c->expira_em = now()->addMinutes(35);
+-        $c->setRelation('presente', $presente);
+-        $c->setRelation('convidado', new Convidado(['nome' => 'Ana', 'email' => $email]));
+-
+-        return $c;
++        $cotas = new Presente(['nome' => 'Lua de mel', 'valor' => 100, 'cotas_total' => 3]);
++        $inteiro = new Presente(['nome' => 'Jogo de panelas', 'valor' => 300, 'cotas_total' => 1]);
++
++        $p = new Pedido(['total_centavos' => 6666 + 30000, 'token' => 'tok-123', 'codigo' => 'ABC234']);
++        $p->id = 42;
++        $p->expira_em = now()->addMinutes(35);
++        $p->setRelation('convidado', new Convidado(['nome' => 'Ana', 'email' => $email]));
++        $p->setRelation('itens', collect([
++            (new Contribuicao(['quantidade_cotas' => 2, 'valor_centavos' => 6666]))->setRelation('presente', $cotas),
++            (new Contribuicao(['quantidade_cotas' => 1, 'valor_centavos' => 30000]))->setRelation('presente', $inteiro),
++        ]));
++
++        return $p;
+     }
+ 
+     public function test_requisicao_enviada_ao_stripe_tem_o_formato_esperado(): void
+     {
+-        $c = $this->contribuicao('ana@ex.com');
++        $c = $this->pedido('ana@ex.com');
+ 
+         $sessao = (new StripeGateway())->criarCheckout($c);
+ 
+@@ -61,13 +68,17 @@ public function test_requisicao_enviada_ao_stripe_tem_o_formato_esperado(): void
+         $x = $this->http->chamadas[0];
+         $this->assertSame('post', strtolower($x['method']));
+         $this->assertStringEndsWith('/v1/checkout/sessions', $x['absUrl']);
+-        $this->assertContains('Idempotency-Key: contribuicao-42', $x['headers']);
++        $this->assertContains('Idempotency-Key: pedido-42', $x['headers']);
+ 
+         $p = $x['params'];
+         $this->assertSame('payment', $p['mode']);
++        $this->assertCount(2, $p['line_items']);                                       // uma linha por presente
+         $this->assertSame('brl', $p['line_items'][0]['price_data']['currency']);
+         $this->assertSame(3333, $p['line_items'][0]['price_data']['unit_amount']);   // inteiro, em centavos, por cota
+         $this->assertSame(2, $p['line_items'][0]['quantity']);
++        $this->assertSame('Lua de mel (cota)', $p['line_items'][0]['price_data']['product_data']['name']);
++        $this->assertSame(30000, $p['line_items'][1]['price_data']['unit_amount']);
++        $this->assertSame('Jogo de panelas', $p['line_items'][1]['price_data']['product_data']['name']);
+         $this->assertSame('42', $p['client_reference_id']);
+         $this->assertSame('ana@ex.com', $p['customer_email']);
+         $this->assertSame($c->expira_em->timestamp, $p['expires_at']);
+@@ -77,7 +88,7 @@ public function test_requisicao_enviada_ao_stripe_tem_o_formato_esperado(): void
+ 
+     public function test_convidado_sem_email_nao_envia_customer_email_vazio(): void
+     {
+-        (new StripeGateway())->criarCheckout($this->contribuicao(null));
++        (new StripeGateway())->criarCheckout($this->pedido(null));
+ 
+         $this->assertArrayNotHasKey('customer_email', $this->http->chamadas[0]['params']);
+     }
+diff --git a/tests/Feature/StripePagamentoTest.php b/tests/Feature/StripePagamentoTest.php
+index 5598650..92e7d57 100644
+--- a/tests/Feature/StripePagamentoTest.php
++++ b/tests/Feature/StripePagamentoTest.php
+@@ -2,8 +2,8 @@
+ 
+ namespace Tests\Feature;
+ 
+-use App\Models\Contribuicao;
+ use App\Models\Convidado;
++use App\Models\Pedido;
+ use App\Models\Presente;
+ use App\Services\StripeGateway;
+ use Illuminate\Foundation\Testing\RefreshDatabase;
+@@ -36,14 +36,14 @@ protected function setUp(): void
+ 
+     // ---------- auxiliares ----------
+ 
+-    private function envio(int $cotas = 1, array $extra = []): array
++    /** Põe o presente na lista e finaliza o pedido pela forma "stripe". */
++    private function pagarOnline(Presente $presente, int $cotas = 1, array $extra = [])
+     {
+-        return array_merge([
+-            'quantidade_cotas' => $cotas,
+-            'nome' => 'Ana',
+-            'email' => 'ana@example.com',
+-            'mensagem' => 'Parabéns!',
+-        ], $extra);
++        $this->post(route('carrinho.adicionar', $presente), ['quantidade_cotas' => $cotas]);
++
++        return $this->post(route('pedido.store'), array_merge([
++            'forma' => 'stripe', 'nome' => 'Ana', 'email' => 'ana@example.com', 'mensagem' => 'Parabéns!',
++        ], $extra));
+     }
+ 
+     private function sessaoFalsa(string $id = 'cs_test_123'): Session
+@@ -58,34 +58,45 @@ private function gatewayQueCria(string $id = 'cs_test_123'): MockInterface
+         });
+     }
+ 
+-    private function pendente(Presente $presente, int $cotas = 1, array $extra = []): Contribuicao
++    /** Um pedido "stripe" pendente, como o sistema o deixa depois de mandar a pessoa ao Stripe. */
++    private function pendente(Presente $presente, int $cotas = 1, array $extra = []): Pedido
+     {
+-        return Contribuicao::create(array_merge([
+-            'presente_id' => $presente->id,
+-            'convidado_id' => Convidado::factory()->create()->id,
+-            'quantidade_cotas' => $cotas,
++        $total = $presente->valor_cota_centavos * $cotas;
++        $convidado = Convidado::factory()->create();
++
++        $pedido = Pedido::create(array_merge([
++            'convidado_id' => $convidado->id,
++            'forma' => 'stripe',
+             'status' => 'pendente',
+-            'valor_centavos' => $presente->valor_cota_centavos * $cotas,
++            'total_centavos' => $total,
+             'token' => (string) Str::uuid(),
++            'codigo' => Pedido::gerarCodigo(),
+             'stripe_session_id' => 'cs_test_'.Str::random(6),
+             'expira_em' => now()->addMinutes(35),
+         ], $extra));
++
++        $pedido->itens()->create([
++            'presente_id' => $presente->id, 'convidado_id' => $convidado->id, 'quantidade_cotas' => $cotas,
++            'valor_centavos' => $total, 'status' => $pedido->status, 'expira_em' => $pedido->expira_em,
++        ]);
++
++        return $pedido;
+     }
+ 
+     /** Monta um aviso do Stripe, assina como o Stripe assinaria e envia ao webhook. */
+-    private function webhook(string $tipo, Contribuicao $c, array $sessao = [], ?string $assinaturaFalsa = null)
++    private function webhook(string $tipo, Pedido $p, array $sessao = [], ?string $assinaturaFalsa = null)
+     {
+         $corpo = json_encode([
+             'id' => 'evt_'.Str::random(8),
+             'object' => 'event',
+             'type' => $tipo,
+             'data' => ['object' => array_merge([
+-                'id' => $c->stripe_session_id,
++                'id' => $p->stripe_session_id,
+                 'object' => 'checkout.session',
+-                'client_reference_id' => (string) $c->id,
++                'client_reference_id' => (string) $p->id,
+                 'payment_status' => 'paid',
+                 'payment_intent' => 'pi_test_999',
+-                'amount_total' => $c->valor_centavos,
++                'amount_total' => $p->total_centavos,
+                 'currency' => 'brl',
+             ], $sessao)],
+         ]);
+@@ -100,20 +111,21 @@ private function webhook(string $tipo, Contribuicao $c, array $sessao = [], ?str
+ 
+     // ---------- iniciar o pagamento ----------
+ 
+-    public function test_cria_contribuicao_pendente_e_leva_ao_checkout_do_stripe(): void
++    public function test_cria_pedido_pendente_e_leva_ao_checkout_do_stripe(): void
+     {
+         $presente = Presente::factory()->create(['valor' => 100.00, 'cotas_total' => 3]);
+         $this->gatewayQueCria('cs_test_abc');
+ 
+-        $this->post(route('presentes.contribuir', $presente), $this->envio(2))
+-            ->assertRedirect('https://checkout.stripe.com/c/pay/cs_test_abc');
++        $this->pagarOnline($presente, 2)->assertRedirect('https://checkout.stripe.com/c/pay/cs_test_abc');
+ 
+-        $c = Contribuicao::firstOrFail();
+-        $this->assertSame('pendente', $c->status);
+-        $this->assertSame('cs_test_abc', $c->stripe_session_id);
+-        $this->assertSame(6666, $c->valor_centavos); // 2 cotas de R$ 33,33, em centavos inteiros
+-        $this->assertNotNull($c->token);
+-        $this->assertTrue($c->expira_em->isFuture());
++        $p = Pedido::firstOrFail();
++        $this->assertSame('pendente', $p->status);
++        $this->assertSame('stripe', $p->forma);
++        $this->assertSame('cs_test_abc', $p->stripe_session_id);
++        $this->assertSame(6666, $p->total_centavos); // 2 cotas de R$ 33,33, em centavos inteiros
++        $this->assertNotNull($p->token);
++        $this->assertTrue($p->expira_em->isFuture());
++        $this->assertSame('pendente', $p->itens->first()->status);
+     }
+ 
+     public function test_o_valor_cobrado_vem_do_banco_e_nao_do_formulario(): void
+@@ -121,12 +133,12 @@ public function test_o_valor_cobrado_vem_do_banco_e_nao_do_formulario(): void
+         $presente = Presente::factory()->create(['valor' => 300.00, 'cotas_total' => 1]);
+         $this->gatewayQueCria();
+ 
+-        // Alguém tenta forjar campos de preço no formulário
+-        $this->post(route('presentes.contribuir', $presente), $this->envio(1, ['valor' => 1, 'valor_centavos' => 100, 'status' => 'paga']));
++        // Alguém tenta forjar campos de preço e de situação no formulário
++        $this->pagarOnline($presente, 1, ['valor' => 1, 'total_centavos' => 100, 'status' => 'paga']);
+ 
+-        $c = Contribuicao::firstOrFail();
+-        $this->assertSame(30000, $c->valor_centavos);
+-        $this->assertSame('pendente', $c->status);
++        $p = Pedido::firstOrFail();
++        $this->assertSame(30000, $p->total_centavos);
++        $this->assertSame('pendente', $p->status);
+     }
+ 
+     public function test_valor_com_ponto_flutuante_vira_centavo_exato(): void
+@@ -143,12 +155,13 @@ public function test_falha_no_stripe_libera_as_cotas_e_nao_vaza_o_erro(): void
+             $m->shouldReceive('criarCheckout')->once()->andThrow(new \Stripe\Exception\AuthenticationException('Invalid API Key sk_test_falsa'));
+         });
+ 
+-        $this->post(route('presentes.contribuir', $presente), $this->envio(1))
+-            ->assertRedirect(route('presentes.index'))
+-            ->assertSessionHas('erro', 'Não foi possível iniciar o pagamento agora. Tente novamente em instantes.');
++        $this->pagarOnline($presente)
++            ->assertRedirect(route('carrinho.mostrar'))
++            ->assertSessionHas('erro', 'Não foi possível iniciar o pagamento agora. Tente de novo em instantes ou escolha outra forma de enviar.');
+ 
+-        $this->assertSame('falhou', Contribuicao::first()->status);
++        $this->assertSame('falhou', Pedido::first()->status);
+         $this->assertSame(1, $presente->fresh()->cotas_restantes); // liberou
++        $this->get(route('carrinho.mostrar'))->assertSee($presente->nome); // a lista continua lá para tentar outra forma
+     }
+ 
+     public function test_abaixo_do_valor_minimo_nao_cria_pagamento(): void
+@@ -156,21 +169,39 @@ public function test_abaixo_do_valor_minimo_nao_cria_pagamento(): void
+         $presente = Presente::factory()->create(['valor' => 3.00, 'cotas_total' => 1]);
+         $this->mock(StripeGateway::class)->shouldNotReceive('criarCheckout');
+ 
+-        $this->post(route('presentes.contribuir', $presente), $this->envio(1))->assertSessionHas('erro');
++        $this->pagarOnline($presente)->assertSessionHas('erro');
+ 
+-        $this->assertDatabaseCount('contribuicoes', 0);
++        $this->assertDatabaseCount('pedidos', 0);
+     }
+ 
+-    public function test_sem_chave_do_stripe_continua_no_modo_reservar(): void
++    public function test_sem_chave_do_stripe_a_forma_online_e_recusada(): void
+     {
+         config(['stripe.habilitado' => false]);
+         $presente = Presente::factory()->create(['cotas_total' => 2]);
+         $this->mock(StripeGateway::class)->shouldNotReceive('criarCheckout');
+ 
+-        $this->post(route('presentes.contribuir', $presente), $this->envio(1))->assertSessionHas('mensagem');
++        $this->pagarOnline($presente)->assertSessionHas('erro', 'O pagamento online ainda não está disponível.');
+ 
+-        $this->assertSame('reservada', Contribuicao::first()->status);
+-        $this->assertSame(1, $presente->fresh()->cotas_restantes);
++        $this->assertDatabaseCount('pedidos', 0);
++    }
++
++    public function test_um_checkout_com_varios_presentes_e_um_unico_pedido(): void
++    {
++        $a = Presente::factory()->create(['valor' => 100, 'cotas_total' => 1]);
++        $b = Presente::factory()->create(['valor' => 90, 'cotas_total' => 3]);
++
++        $this->mock(StripeGateway::class, function (MockInterface $m) {
++            $m->shouldReceive('criarCheckout')->once()->withArgs(fn (Pedido $p) => $p->itens()->count() === 2)
++                ->andReturn($this->sessaoFalsa());
++        });
++
++        $this->post(route('carrinho.adicionar', $a), ['quantidade_cotas' => 1]);
++        $this->post(route('carrinho.adicionar', $b), ['quantidade_cotas' => 2]);
++        $this->post(route('pedido.store'), ['forma' => 'stripe', 'nome' => 'Ana', 'email' => 'ana@example.com'])
++            ->assertRedirect('https://checkout.stripe.com/c/pay/cs_test_123');
++
++        $this->assertDatabaseCount('pedidos', 1);
++        $this->assertSame(16000, Pedido::first()->total_centavos); // 10000 + 2 x 3000
+     }
+ 
+     // ---------- cotas seguradas ----------
+@@ -180,11 +211,11 @@ public function test_pendente_no_prazo_segura_as_cotas_e_vencida_libera(): void
+         $presente = Presente::factory()->create(['cotas_total' => 2]);
+         $this->pendente($presente, 2);
+ 
+-        $this->mock(StripeGateway::class)->shouldNotReceive('criarCheckout');
+-        $this->post(route('presentes.contribuir', $presente), $this->envio(1, ['email' => 'outro@ex.com']))
++        $this->post(route('carrinho.adicionar', $presente), ['quantidade_cotas' => 1])
+             ->assertSessionHas('erro'); // outra pessoa já está pagando
+ 
+-        Contribuicao::query()->update(['expira_em' => now()->subMinute()]); // prazo vencido
++        Pedido::query()->update(['expira_em' => now()->subMinute()]);
++        \App\Models\Contribuicao::query()->update(['expira_em' => now()->subMinute()]); // prazo vencido
+         $this->assertSame(2, $presente->fresh()->cotas_restantes);
+     }
+ 
+@@ -192,182 +223,193 @@ public function test_pendente_no_prazo_segura_as_cotas_e_vencida_libera(): void
+ 
+     public function test_webhook_com_assinatura_invalida_e_recusado(): void
+     {
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
+ 
+-        $this->webhook('checkout.session.completed', $c, [], 't=1,v1=assinatura_errada')->assertStatus(400);
++        $this->webhook('checkout.session.completed', $p, [], 't=1,v1=assinatura_errada')->assertStatus(400);
+ 
+-        $this->assertSame('pendente', $c->fresh()->status);
++        $this->assertSame('pendente', $p->fresh()->status);
+     }
+ 
+     public function test_webhook_sem_segredo_configurado_recusa_tudo(): void
+     {
+         config(['stripe.webhook_secret' => null]);
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
+ 
+-        $this->webhook('checkout.session.completed', $c)->assertStatus(503);
+-        $this->assertSame('pendente', $c->fresh()->status);
++        $this->webhook('checkout.session.completed', $p)->assertStatus(503);
++        $this->assertSame('pendente', $p->fresh()->status);
+     }
+ 
+     public function test_webhook_nao_precisa_de_login_nem_csrf(): void
+     {
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
+ 
+-        $this->webhook('checkout.session.completed', $c)->assertOk();
++        $this->webhook('checkout.session.completed', $p)->assertOk();
+     }
+ 
+-    public function test_pagamento_confirmado_marca_como_paga(): void
++    public function test_pagamento_confirmado_marca_o_pedido_e_os_itens_como_pagos(): void
+     {
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1, 'valor' => 150]));
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1, 'valor' => 150]));
+ 
+-        $this->webhook('checkout.session.completed', $c)->assertOk();
++        $this->webhook('checkout.session.completed', $p)->assertOk();
+ 
+-        $c->refresh();
+-        $this->assertSame('paga', $c->status);
+-        $this->assertSame('pi_test_999', $c->stripe_payment_intent_id);
+-        $this->assertNotNull($c->pago_em);
++        $p->refresh();
++        $this->assertSame('paga', $p->status);
++        $this->assertSame('paga', $p->itens->first()->status);
++        $this->assertSame('pi_test_999', $p->stripe_payment_intent_id);
++        $this->assertNotNull($p->pago_em);
+     }
+ 
+     public function test_o_mesmo_aviso_repetido_nao_muda_nada(): void
+     {
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
+ 
+-        $this->webhook('checkout.session.completed', $c)->assertOk();
+-        $primeiraHora = $c->fresh()->pago_em;
++        $this->webhook('checkout.session.completed', $p)->assertOk();
++        $primeiraHora = $p->fresh()->pago_em;
+ 
+         $this->travel(5)->minutes();
+-        $this->webhook('checkout.session.completed', $c)->assertOk();
++        $this->webhook('checkout.session.completed', $p)->assertOk();
+ 
+-        $this->assertSame('paga', $c->fresh()->status);
+-        $this->assertEquals($primeiraHora, $c->fresh()->pago_em); // não regravou
++        $this->assertSame('paga', $p->fresh()->status);
++        $this->assertEquals($primeiraHora, $p->fresh()->pago_em); // não regravou
+     }
+ 
+     public function test_pix_fica_pendente_ate_o_aviso_de_pagamento_assincrono(): void
+     {
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
+ 
+-        $this->webhook('checkout.session.completed', $c, ['payment_status' => 'unpaid'])->assertOk();
+-        $this->assertSame('pendente', $c->fresh()->status);
++        $this->webhook('checkout.session.completed', $p, ['payment_status' => 'unpaid'])->assertOk();
++        $this->assertSame('pendente', $p->fresh()->status);
+ 
+-        $this->webhook('checkout.session.async_payment_succeeded', $c)->assertOk();
+-        $this->assertSame('paga', $c->fresh()->status);
++        $this->webhook('checkout.session.async_payment_succeeded', $p)->assertOk();
++        $this->assertSame('paga', $p->fresh()->status);
+     }
+ 
+     public function test_pagamento_assincrono_que_falha_libera_as_cotas(): void
+     {
+         $presente = Presente::factory()->create(['cotas_total' => 1]);
+-        $c = $this->pendente($presente);
++        $p = $this->pendente($presente);
+ 
+-        $this->webhook('checkout.session.async_payment_failed', $c, ['payment_status' => 'unpaid'])->assertOk();
++        $this->webhook('checkout.session.async_payment_failed', $p, ['payment_status' => 'unpaid'])->assertOk();
+ 
+-        $this->assertSame('falhou', $c->fresh()->status);
++        $this->assertSame('falhou', $p->fresh()->status);
+         $this->assertSame(1, $presente->fresh()->cotas_restantes);
+     }
+ 
+     public function test_sessao_expirada_libera_as_cotas(): void
+     {
+         $presente = Presente::factory()->create(['cotas_total' => 1]);
+-        $c = $this->pendente($presente);
++        $p = $this->pendente($presente);
+ 
+-        $this->webhook('checkout.session.expired', $c, ['payment_status' => 'unpaid'])->assertOk();
++        $this->webhook('checkout.session.expired', $p, ['payment_status' => 'unpaid'])->assertOk();
+ 
+-        $this->assertSame('expirada', $c->fresh()->status);
++        $this->assertSame('expirada', $p->fresh()->status);
+         $this->assertSame(1, $presente->fresh()->cotas_restantes);
+     }
+ 
+     public function test_expirar_nunca_desfaz_um_pagamento_ja_confirmado(): void
+     {
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
+-        $this->webhook('checkout.session.completed', $c)->assertOk();
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
++        $this->webhook('checkout.session.completed', $p)->assertOk();
+ 
+-        $this->webhook('checkout.session.expired', $c, ['payment_status' => 'unpaid'])->assertOk();
++        $this->webhook('checkout.session.expired', $p, ['payment_status' => 'unpaid'])->assertOk();
+ 
+-        $this->assertSame('paga', $c->fresh()->status);
++        $this->assertSame('paga', $p->fresh()->status);
++        $this->assertSame('paga', $p->fresh()->itens->first()->status);
+     }
+ 
+     public function test_valor_pago_diferente_do_esperado_nao_confirma(): void
+     {
+         Log::spy();
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1, 'valor' => 200]));
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1, 'valor' => 200]));
+ 
+-        $this->webhook('checkout.session.completed', $c, ['amount_total' => 100])->assertOk();
++        $this->webhook('checkout.session.completed', $p, ['amount_total' => 100])->assertOk();
+ 
+-        $this->assertSame('pendente', $c->fresh()->status);
++        $this->assertSame('pendente', $p->fresh()->status);
+         Log::shouldHaveReceived('critical')->once();
+     }
+ 
+     public function test_pagamento_que_chega_depois_de_expirar_ainda_vale(): void
+     {
+-        $presente = Presente::factory()->create(['cotas_total' => 1]);
+-        $c = $this->pendente($presente);
+-        $c->liberar('expirada');
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
++        $p->liberar('expirada');
++
++        $this->webhook('checkout.session.async_payment_succeeded', $p)->assertOk();
++
++        $this->assertSame('paga', $p->fresh()->status); // dinheiro recebido é dinheiro recebido
++    }
++
++    public function test_webhook_nunca_confirma_pedido_que_nao_e_do_stripe(): void
++    {
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]), 1, ['forma' => 'pix', 'stripe_session_id' => null]);
+ 
+-        $this->webhook('checkout.session.async_payment_succeeded', $c)->assertOk();
++        $this->webhook('checkout.session.completed', $p, ['id' => 'cs_x'])->assertOk();
+ 
+-        $this->assertSame('paga', $c->fresh()->status); // dinheiro recebido é dinheiro recebido
++        $this->assertSame('pendente', $p->fresh()->status);
+     }
+ 
+     public function test_evento_de_outra_coisa_e_ignorado_com_200(): void
+     {
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
+ 
+-        $this->webhook('checkout.session.completed', $c, ['client_reference_id' => '999999'])->assertOk();
++        $this->webhook('checkout.session.completed', $p, ['client_reference_id' => '999999'])->assertOk();
+ 
+-        $this->assertSame('pendente', $c->fresh()->status);
++        $this->assertSame('pendente', $p->fresh()->status);
+     }
+ 
+     // ---------- páginas de retorno ----------
+ 
+     public function test_pagina_de_sucesso_nao_confia_na_url_e_pergunta_ao_stripe(): void
+     {
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
+ 
+-        $this->mock(StripeGateway::class, function (MockInterface $m) use ($c) {
++        $this->mock(StripeGateway::class, function (MockInterface $m) use ($p) {
+             $m->shouldReceive('buscarCheckout')->once()->andReturn(Session::constructFrom([
+-                'id' => $c->stripe_session_id, 'payment_status' => 'unpaid', 'amount_total' => $c->valor_centavos, 'currency' => 'brl',
++                'id' => $p->stripe_session_id, 'payment_status' => 'unpaid', 'amount_total' => $p->total_centavos, 'currency' => 'brl',
+             ]));
+         });
+ 
+-        $this->get(route('pagamento.sucesso', $c->token))
++        $this->get(route('pagamento.sucesso', $p->token))
+             ->assertOk()->assertSee('Estamos confirmando');
+ 
+-        $this->assertSame('pendente', $c->fresh()->status); // visitar a URL não paga nada
++        $this->assertSame('pendente', $p->fresh()->status); // visitar a URL não paga nada
+     }
+ 
+     public function test_pagina_de_sucesso_confirma_quando_o_stripe_diz_que_pagou(): void
+     {
+-        $c = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
++        $p = $this->pendente(Presente::factory()->create(['cotas_total' => 1]));
+ 
+-        $this->mock(StripeGateway::class, function (MockInterface $m) use ($c) {
++        $this->mock(StripeGateway::class, function (MockInterface $m) use ($p) {
+             $m->shouldReceive('buscarCheckout')->once()->andReturn(Session::constructFrom([
+-                'id' => $c->stripe_session_id, 'payment_status' => 'paid', 'payment_intent' => 'pi_77',
+-                'amount_total' => $c->valor_centavos, 'currency' => 'brl',
++                'id' => $p->stripe_session_id, 'payment_status' => 'paid', 'payment_intent' => 'pi_77',
++                'amount_total' => $p->total_centavos, 'currency' => 'brl',
+             ]));
+         });
+ 
+-        $this->get(route('pagamento.sucesso', $c->token))->assertOk()->assertSee('Pagamento confirmado');
++        $this->get(route('pagamento.sucesso', $p->token))->assertOk()->assertSee('Pagamento confirmado');
+ 
+-        $this->assertSame('paga', $c->fresh()->status);
++        $this->assertSame('paga', $p->fresh()->status);
+     }
+ 
+     public function test_token_inexistente_da_404(): void
+     {
+         $this->get(route('pagamento.sucesso', (string) Str::uuid()))->assertNotFound();
+         $this->get(route('pagamento.cancelado', (string) Str::uuid()))->assertNotFound();
++        $this->get(route('pedido.mostrar', (string) Str::uuid()))->assertNotFound();
+     }
+ 
+     public function test_cancelar_fecha_a_sessao_e_devolve_as_cotas_na_hora(): void
+     {
+         $presente = Presente::factory()->create(['cotas_total' => 1]);
+-        $c = $this->pendente($presente);
++        $p = $this->pendente($presente);
+ 
+-        $this->mock(StripeGateway::class, function (MockInterface $m) use ($c) {
+-            $m->shouldReceive('expirarCheckout')->once()->with($c->stripe_session_id);
++        $this->mock(StripeGateway::class, function (MockInterface $m) use ($p) {
++            $m->shouldReceive('expirarCheckout')->once()->with($p->stripe_session_id);
+         });
+ 
+-        $this->get(route('pagamento.cancelado', $c->token))
++        $this->get(route('pagamento.cancelado', $p->token))
+             ->assertRedirect(route('presentes.index'))->assertSessionHas('erro');
+ 
+-        $this->assertSame('cancelada', $c->fresh()->status);
++        $this->assertSame('cancelada', $p->fresh()->status);
+         $this->assertSame(1, $presente->fresh()->cotas_restantes);
+     }
+ 
+@@ -380,13 +422,13 @@ public function test_painel_so_soma_como_recebido_o_que_esta_pago(): void
+         $outro = Presente::factory()->create(['valor' => 50, 'cotas_total' => 1]);
+         $this->pendente($presente);                                 // ainda não pagou
+         $paga = $this->pendente($outro);
+-        $paga->marcarComoPaga('pi_1');
++        $paga->confirmar('pi_1');
+ 
+         $this->get(route('painel'))
+             ->assertOk()
+             ->assertSee('R$ 50,00')            // só a paga
+             ->assertDontSee('R$ 150,00');
+ 
+-        $this->get(route('contribuicoes.index'))->assertOk()->assertSee('Aguardando pagamento')->assertSee('Paga');
++        $this->get(route('pedidos.index'))->assertOk()->assertSee('Aguardando pagamento')->assertSee('Paga');
+     }
+ }

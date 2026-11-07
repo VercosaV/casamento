@@ -212,3 +212,9 @@ section[id] { scroll-margin-top: 72px; } /* a âncora não some atrás do menu *
 .secao-item.escondida { opacity: .6; background: #faf8f4; }
 .secao-item .ordem { font-family: var(--fonte-titulo); font-size: 1.8rem; color: var(--ouro); width: 2rem; text-align: center; }
 .foto-miniatura { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; }
+
+/* ---------- 10) "Minha lista": as 3 formas de enviar ---------- */
+.opcao-envio { border: 1px solid var(--ouro-claro); border-radius: 12px; padding: .9rem 1rem; margin-bottom: .75rem; }
+.opcao-envio:has(input:checked) { border-color: var(--ouro-escuro); background: var(--creme); }
+.opcao-envio.desativada { opacity: .6; background: #f8f8f8; }
+.nav-lista { color: var(--ouro-escuro) !important; }

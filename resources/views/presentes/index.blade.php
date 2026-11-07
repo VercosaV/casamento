@@ -6,9 +6,12 @@
 <div class="pagina">
     <div class="container">
         <h1 class="mb-2">Lista de presentes</h1>
-        <p class="text-center text-muted mb-4">Escolha um presente ou contribua com uma cota. Seu carinho já é o maior presente.</p>
-        @if (config('stripe.habilitado'))
-            <p class="text-center small text-muted mb-4">Depois de escolher, você será levado à página segura do Stripe para pagar.</p>
+        <p class="text-center text-muted mb-2">Escolha um ou mais presentes e junte tudo em <strong>Minha lista</strong>.</p>
+        <p class="text-center small text-muted mb-4">Depois você decide como enviar: comprando o presente, pagando online ou mandando um Pix.</p>
+        @if (\App\Support\Carrinho::quantidade() > 0)
+            <p class="text-center mb-4">
+                <a href="{{ route('carrinho.mostrar') }}" class="btn btn-ouro">Ver minha lista ({{ \App\Support\Carrinho::quantidade() }}) e finalizar</a>
+            </p>
         @endif
 
         @if ($errors->any())
@@ -84,36 +87,28 @@
                             @if ($presente->esgotado)
                                 <span class="badge bg-secondary align-self-start mt-auto">Já escolhido</span>
                             @else
-                                <form method="POST" action="{{ route('presentes.contribuir', $presente) }}" class="mt-auto">
+                                <form method="POST" action="{{ route('carrinho.adicionar', $presente) }}" class="mt-auto">
                                     @csrf
-
-                                    @unless (session('convidado_id'))
-                                        <input type="text" name="nome" class="form-control mb-2" placeholder="Seu nome" required>
-                                        <input type="email" name="email" class="form-control mb-2" placeholder="Seu e-mail" required>
-                                    @endunless
 
                                     @if ($presente->cotas_total > 1)
                                         <select name="quantidade_cotas" class="form-select mb-2" aria-label="Quantidade de cotas">
                                             @for ($i = 1; $i <= $presente->cotas_restantes; $i++)
-                                                <option value="{{ $i }}">{{ $i }} {{ $i === 1 ? 'cota' : 'cotas' }}</option>
+                                                <option value="{{ $i }}" @selected((int) (\App\Support\Carrinho::itens()[$presente->id] ?? 1) === $i)>{{ $i }} {{ $i === 1 ? 'cota' : 'cotas' }}</option>
                                             @endfor
                                         </select>
                                     @else
                                         <input type="hidden" name="quantidade_cotas" value="1">
                                     @endif
 
-                                    <textarea name="mensagem" class="form-control mb-2" rows="2" maxlength="400"
-                                        placeholder="Mensagem para os noivos (opcional)"></textarea>
+                                    @if (isset(\App\Support\Carrinho::itens()[$presente->id]))
+                                        <button type="submit" class="btn btn-contorno btn-sm w-100">Na sua lista · atualizar</button>
+                                    @else
+                                        <button type="submit" class="btn btn-ouro btn-sm w-100">Adicionar à minha lista</button>
+                                    @endif
 
-                                    <button type="submit" class="btn btn-ouro btn-sm w-100">
-                                        @if (config('stripe.habilitado'))
-                                            {{ $presente->cotas_total > 1 ? 'Contribuir e pagar' : 'Presentear e pagar' }}
-                                        @else
-                                            {{ $presente->cotas_total > 1 ? 'Contribuir' : 'Escolher este presente' }}
-                                        @endif
-                                    </button>
-                                    @if (config('stripe.habilitado'))
-                                        <div class="form-text text-center mt-1">Pagamento seguro pelo Stripe. Não guardamos dados do cartão.</div>
+                                    @if ($presente->link)
+                                        <a href="{{ $presente->link }}" target="_blank" rel="noopener noreferrer"
+                                            class="d-block text-center small mt-2">Ver na loja</a>
                                     @endif
                                 </form>
                             @endif

@@ -44,6 +44,12 @@
                         <a class="nav-link {{ request()->routeIs('rsvp.create') ? 'active' : '' }}"
                             href="{{ route('rsvp.create') }}">Confirme sua presença</a>
                     </li>
+                    @if (\App\Support\Carrinho::quantidade() > 0)
+                        <li class="nav-item">
+                            <a class="nav-link nav-lista {{ request()->routeIs('carrinho.mostrar') ? 'active' : '' }}"
+                                href="{{ route('carrinho.mostrar') }}">Minha lista ({{ \App\Support\Carrinho::quantidade() }})</a>
+                        </li>
+                    @endif
                 </ul>
             </div>
         </div>

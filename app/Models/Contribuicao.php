@@ -9,29 +9,34 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Contribuicao extends Model
 {
-    public const PENDENTE = 'pendente';
-    public const PAGA = 'paga';
-    public const RESERVADA = 'reservada';
-    public const EXPIRADA = 'expirada';
-    public const CANCELADA = 'cancelada';
-    public const FALHOU = 'falhou';
+    public const PENDENTE = Pedido::PENDENTE;
+    public const PAGA = Pedido::PAGA;
+    public const RESERVADA = Pedido::RESERVADA;
+    public const ENTREGUE = Pedido::ENTREGUE;
+
+    // Já são presentes de verdade (dinheiro confirmado, ou comprado e reservado/entregue).
+    public const ESCOLHIDOS = [self::PAGA, self::RESERVADA, self::ENTREGUE];
 
     // Obrigatório: sem isto o Laravel procuraria a tabela "contribuicaos"
     // (ele pluraliza em inglês).
     protected $table = 'contribuicoes';
 
+    // Uma contribuição é UMA LINHA do pedido: este presente, esta quantidade de cotas.
+    // A forma de envio, o token, o Stripe e o pagamento ficam no Pedido.
+    // O status e o expira_em são copiados para cá só para a regra "cota ocupada" ser uma consulta simples.
     protected $fillable = [
-        'presente_id', 'convidado_id', 'quantidade_cotas', 'mensagem',
-        'status', 'valor_centavos', 'token', 'stripe_session_id',
-        'stripe_payment_intent_id', 'expira_em', 'pago_em',
+        'pedido_id', 'presente_id', 'convidado_id', 'quantidade_cotas', 'mensagem',
+        'status', 'valor_centavos', 'expira_em',
     ];
 
     protected function casts(): array
     {
-        return [
-            'expira_em' => 'datetime',
-            'pago_em'   => 'datetime',
-        ];
+        return ['expira_em' => 'datetime'];
+    }
+
+    public function pedido(): BelongsTo
+    {
+        return $this->belongsTo(Pedido::class);
     }
 
     public function presente(): BelongsTo
@@ -44,61 +49,21 @@ class Contribuicao extends Model
         return $this->belongsTo(Convidado::class);
     }
 
-    // Contribuições que OCUPAM cotas: pagas, reservadas sem pagamento, ou pendentes
+    // Contribuições que OCUPAM cotas: pagas, reservadas/entregues (comprar), ou pendentes
     // que ainda estão dentro do prazo. Pendente vencida não segura nada.
     // Este é o ÚNICO lugar que define "cota ocupada": todo o resto reaproveita.
     public function scopeOcupandoCota(Builder $query): Builder
     {
         return $query->where(function (Builder $q) {
-            $q->whereIn('status', [self::PAGA, self::RESERVADA])
+            $q->whereIn('status', self::ESCOLHIDOS)
               ->orWhere(function (Builder $q) {
                   $q->where('status', self::PENDENTE)->where('expira_em', '>', now());
               });
         });
     }
 
-    // "pendente" com prazo vencido é, na prática, expirada (mesmo que o Stripe ainda não tenha avisado).
-    protected function statusEfetivo(): Attribute
-    {
-        return Attribute::get(fn () => $this->status === self::PENDENTE && $this->expira_em?->isPast()
-            ? self::EXPIRADA
-            : $this->status);
-    }
-
     protected function valorReais(): Attribute
     {
         return Attribute::get(fn () => $this->valor_centavos === null ? null : $this->valor_centavos / 100);
-    }
-
-    // ---------- Transições de estado ----------
-    // Cada uma é UM update condicional: o próprio banco decide quem "ganha" se dois avisos
-    // chegarem ao mesmo tempo, e repetir o mesmo aviso não faz nada (idempotente).
-
-    /** Confirma o pagamento. Aceita vir de qualquer estado exceto "paga": dinheiro recebido é dinheiro recebido. */
-    public function marcarComoPaga(?string $paymentIntentId): bool
-    {
-        $linhas = static::whereKey($this->id)
-            ->where('status', '!=', self::PAGA)
-            ->update([
-                'status'                   => self::PAGA,
-                'pago_em'                  => now(),
-                'stripe_payment_intent_id' => $paymentIntentId,
-            ]);
-
-        $this->refresh();
-
-        return $linhas === 1;
-    }
-
-    /** Libera as cotas. Só mexe em quem ainda está pendente: nunca desfaz um pagamento já confirmado. */
-    public function liberar(string $novoStatus): bool
-    {
-        $linhas = static::whereKey($this->id)
-            ->where('status', self::PENDENTE)
-            ->update(['status' => $novoStatus]);
-
-        $this->refresh();
-
-        return $linhas === 1;
     }
 }

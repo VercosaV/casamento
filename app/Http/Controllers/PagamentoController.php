@@ -2,8 +2,9 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Contribuicao;
+use App\Models\Pedido;
 use App\Services\StripeGateway;
+use App\Support\ConferenciaStripe;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Stripe\Exception\ApiErrorException;
@@ -11,43 +12,21 @@ use Stripe\Exception\SignatureVerificationException;
 
 class PagamentoController extends Controller
 {
-    // Para onde o Stripe devolve a pessoa depois de pagar.
-    // ATENÇÃO: estar nesta página NÃO prova que pagou (qualquer um digita a URL).
-    // Por isso perguntamos ao Stripe, com a nossa chave secreta, qual é a situação real.
-    public function sucesso(string $token, StripeGateway $stripe)
-    {
-        $contribuicao = Contribuicao::where('token', $token)->with('presente')->firstOrFail();
-
-        if ($contribuicao->status === Contribuicao::PENDENTE && $contribuicao->stripe_session_id) {
-            try {
-                $sessao = $stripe->buscarCheckout($contribuicao->stripe_session_id);
-
-                if ($sessao->payment_status === 'paid' && $this->valorConfere($contribuicao, $sessao)) {
-                    $contribuicao->marcarComoPaga($this->paymentIntentId($sessao));
-                }
-            } catch (ApiErrorException $e) {
-                report($e); // sem problema: o webhook confirma depois
-            }
-        }
-
-        return view('pagamento.sucesso', compact('contribuicao'));
-    }
-
     // A pessoa clicou em "voltar" na página do Stripe: fecha a sessão e devolve as cotas na hora.
     public function cancelado(string $token, StripeGateway $stripe)
     {
-        $contribuicao = Contribuicao::where('token', $token)->firstOrFail();
+        $pedido = Pedido::where('token', $token)->where('forma', Pedido::FORMA_STRIPE)->firstOrFail();
 
-        if ($contribuicao->status === Contribuicao::PENDENTE) {
-            if ($contribuicao->stripe_session_id) {
+        if ($pedido->status === Pedido::PENDENTE) {
+            if ($pedido->stripe_session_id) {
                 try {
-                    $stripe->expirarCheckout($contribuicao->stripe_session_id);
+                    $stripe->expirarCheckout($pedido->stripe_session_id);
                 } catch (ApiErrorException $e) {
                     report($e);
                 }
             }
 
-            $contribuicao->liberar(Contribuicao::CANCELADA);
+            $pedido->liberar(Pedido::CANCELADA);
         }
 
         return redirect()->route('presentes.index')
@@ -72,9 +51,11 @@ class PagamentoController extends Controller
         }
 
         $sessao = $evento->data->object;
-        $contribuicao = Contribuicao::find($sessao->client_reference_id ?? null);
 
-        if (! $contribuicao) {
+        // Só pedidos da forma "stripe": o Pix manual e o "comprar" nunca são confirmados por aqui.
+        $pedido = Pedido::where('forma', Pedido::FORMA_STRIPE)->find($sessao->client_reference_id ?? null);
+
+        if (! $pedido) {
             // Evento de outra coisa (ou de outro sistema na mesma conta Stripe). Responde 200 para
             // o Stripe não ficar reenviando.
             return response('ignorado', 200);
@@ -84,70 +65,50 @@ class PagamentoController extends Controller
             case 'checkout.session.completed':
                 // Cartão: já vem "paid". Pix/boleto: vem "unpaid" e o aviso de pagamento chega depois.
                 if ($sessao->payment_status === 'paid') {
-                    $this->confirmar($contribuicao, $sessao);
+                    $this->confirmar($pedido, $sessao);
                 }
                 break;
 
             case 'checkout.session.async_payment_succeeded':
-                $this->confirmar($contribuicao, $sessao);
+                $this->confirmar($pedido, $sessao);
                 break;
 
             case 'checkout.session.async_payment_failed':
-                $contribuicao->liberar(Contribuicao::FALHOU);
+                $pedido->liberar(Pedido::FALHOU);
                 break;
 
             case 'checkout.session.expired':
-                $contribuicao->liberar(Contribuicao::EXPIRADA);
+                $pedido->liberar(Pedido::EXPIRADA);
                 break;
         }
 
         return response('ok', 200);
     }
 
-    private function confirmar(Contribuicao $contribuicao, $sessao): void
+    private function confirmar(Pedido $pedido, $sessao): void
     {
         // Confere se o valor pago é o valor que nós calculamos. Se não for, não marca como paga.
-        if (! $this->valorConfere($contribuicao, $sessao)) {
+        if (! ConferenciaStripe::valorConfere($pedido, $sessao)) {
             Log::critical('Stripe: valor pago diferente do esperado. Conferir no painel do Stripe.', [
-                'contribuicao_id' => $contribuicao->id,
-                'esperado' => $contribuicao->valor_centavos,
+                'pedido_id' => $pedido->id,
+                'esperado' => $pedido->total_centavos,
                 'recebido' => $sessao->amount_total ?? null,
             ]);
 
             return;
         }
 
-        $estavaLiberada = in_array($contribuicao->status, [
-            Contribuicao::EXPIRADA, Contribuicao::CANCELADA, Contribuicao::FALHOU,
-        ], true);
+        $estavaLiberado = in_array($pedido->status, [Pedido::EXPIRADA, Pedido::CANCELADA, Pedido::FALHOU], true);
 
-        $contribuicao->marcarComoPaga($this->paymentIntentId($sessao));
+        $pedido->confirmar(ConferenciaStripe::paymentIntentId($sessao));
 
         // Pagou DEPOIS de as cotas terem sido liberadas (ex.: Pix pago após o prazo). O dinheiro
-        // entrou, então a contribuição vale; mas se outra pessoa já pegou as cotas, falta presente.
-        if ($estavaLiberada) {
-            $presente = $contribuicao->presente()->first();
-            $ocupadas = (int) $presente->contribuicoesAtivas()->sum('quantidade_cotas');
-
-            if ($ocupadas > $presente->cotas_total) {
-                Log::critical('Stripe: pagamento recebido depois das cotas serem liberadas, e o presente ficou acima do limite. Avaliar reembolso.', [
-                    'contribuicao_id' => $contribuicao->id,
-                    'presente_id' => $presente->id,
-                ]);
-            }
+        // entrou, então o pedido vale; mas se outra pessoa já pegou as cotas, falta presente.
+        if ($estavaLiberado && $pedido->presentesAcimaDoLimite()->isNotEmpty()) {
+            Log::critical('Stripe: pagamento recebido depois das cotas serem liberadas, e um presente ficou acima do limite. Avaliar reembolso.', [
+                'pedido_id' => $pedido->id,
+                'presentes' => $pedido->presentesAcimaDoLimite()->pluck('id'),
+            ]);
         }
-    }
-
-    private function valorConfere(Contribuicao $contribuicao, $sessao): bool
-    {
-        return (int) ($sessao->amount_total ?? -1) === (int) $contribuicao->valor_centavos
-            && strtolower((string) ($sessao->currency ?? '')) === 'brl';
-    }
-
-    private function paymentIntentId($sessao): ?string
-    {
-        $pi = $sessao->payment_intent ?? null;
-
-        return is_object($pi) ? $pi->id : $pi;
     }
 }

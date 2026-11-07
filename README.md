@@ -27,6 +27,18 @@ Depois de mexer no `.env`, rode `php artisan config:clear`.
 
 Entre em `http://localhost:8000/login` com o e-mail e a senha que você cadastrou. O painel fica em `/painel`.
 
+## Presentes: as 3 formas de enviar
+
+O convidado junta um ou mais presentes em **Minha lista** e escolhe **uma** forma de enviar todos:
+
+| Forma | O que acontece | Quem confirma | Precisa configurar |
+|---|---|---|---|
+| **Comprar o presente** | o convidado compra numa loja e entrega; o presente fica reservado | os noivos clicam em *Recebi* | `ENDERECO_ENTREGA` (opcional). Só vale para presentes inteiros, sem cotas |
+| **Pagar online** | página segura do Stripe (cartão; Pix com QR Code se estiver ativo na conta Stripe) | automático, pelo webhook | `STRIPE_SK` e `STRIPE_WEBHOOK_SECRET` |
+| **Pix direto** | mostramos a chave Pix, o valor exato e um código de referência | os noivos clicam em *Pix chegou* | `PIX_CHAVE` e `PIX_BENEFICIARIO` |
+
+Uma forma sem configuração simplesmente não aparece habilitada. Em **Painel > Quem presenteou** os noivos acompanham todos os pedidos e resolvem os manuais (confirmar Pix, receber presente, cancelar).
+
 ## Comandos do projeto
 
 | Comando | Para quê |
@@ -46,6 +58,7 @@ Entre em `http://localhost:8000/login` com o e-mail e a senha que você cadastro
 | `php artisan test`: `could not find driver` | extensão `pdo_sqlite` desligada | ative `extension=pdo_sqlite` no `php.ini` |
 | Fotos enviadas não aparecem | falta o link do storage | `php artisan storage:link` |
 | Pagamento não confirma sozinho | falta o webhook do Stripe | veja a seção Stripe |
+| Site inteiro com erro 500 depois de editar o `.env`, e no log `Failed to parse dotenv file` | valor com espaço **sem aspas** (ex.: `PIX_BENEFICIARIO=Victor e Kamilly`) | coloque entre aspas: `PIX_BENEFICIARIO="Victor e Kamilly"` |
 | Qualquer coisa estranha | | `php artisan casamento:verificar` |
 
 ## Testes

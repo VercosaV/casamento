@@ -51,7 +51,7 @@ class PainelTest extends TestCase
         foreach ([
             route('painel'), route('perfil.edit'), route('secoes.index'), route('secoes.create'),
             route('convidados.index'), route('convidados.create'), route('convidados.show', $c), route('convidados.edit', $c),
-            route('presentes.admin'), route('presentes.create'), route('presentes.edit', $p), route('contribuicoes.index'),
+            route('presentes.admin'), route('presentes.create'), route('presentes.edit', $p), route('pedidos.index'),
         ] as $url) {
             $this->get($url)->assertOk();
         }

@@ -54,7 +54,7 @@ class VerificarAmbiente extends Command
             DB::connection()->getPdo();
             $this->ok('Conexão com o banco ('.config('database.default').')');
 
-            $faltando = collect(['users', 'noivos', 'convidados', 'presentes', 'contribuicoes', 'secoes'])
+            $faltando = collect(['users', 'noivos', 'convidados', 'presentes', 'pedidos', 'contribuicoes', 'secoes'])
                 ->reject(fn ($tabela) => Schema::hasTable($tabela));
 
             $faltando->isEmpty()
@@ -101,7 +101,16 @@ class VerificarAmbiente extends Command
                 : $this->ok('STRIPE_WEBHOOK_SECRET configurado');
         }
 
-        // 6) Produção
+        // 6) Formas de enviar o presente (o convidado escolhe entre as que estiverem configuradas)
+        filled(config('casamento.pix.chave'))
+            ? $this->ok('Pix direto: chave cadastrada')
+            : $this->aviso('PIX_CHAVE vazia: a opção "Enviar um Pix direto" não aparece para os convidados', 'defina PIX_CHAVE (e PIX_BENEFICIARIO) no .env');
+
+        filled(config('casamento.entrega.endereco'))
+            ? $this->ok('Endereço de entrega cadastrado (opção "Comprar o presente")')
+            : $this->aviso('ENDERECO_ENTREGA vazio: quem escolher "Comprar o presente" não saberá onde entregar', 'defina ENDERECO_ENTREGA no .env');
+
+        // 7) Produção
         if (app()->isProduction()) {
             config('app.debug')
                 ? $this->erro('APP_DEBUG=true em produção expõe detalhes internos', 'APP_DEBUG=false')

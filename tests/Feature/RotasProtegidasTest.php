@@ -28,7 +28,7 @@ class RotasProtegidasTest extends TestCase
 
     public function test_visitante_vai_para_o_login_em_todas_as_areas_dos_noivos(): void
     {
-        foreach (['/painel', '/perfil', '/secoes', '/convidados', '/presentes-admin', '/presentes/create', '/contribuicoes'] as $url) {
+        foreach (['/painel', '/perfil', '/secoes', '/convidados', '/presentes-admin', '/presentes/create', '/pedidos'] as $url) {
             $this->get($url)->assertRedirect('/login');
         }
     }

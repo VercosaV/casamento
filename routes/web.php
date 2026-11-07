@@ -1,10 +1,12 @@
 <?php
 
 use App\Http\Controllers\AuthController;
-use App\Http\Controllers\ContribuicaoController;
+use App\Http\Controllers\CarrinhoController;
 use App\Http\Controllers\ConvidadoController;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\PagamentoController;
+use App\Http\Controllers\PedidoAdminController;
+use App\Http\Controllers\PedidoController;
 use App\Http\Controllers\PainelController;
 use App\Http\Controllers\PerfilController;
 use App\Http\Controllers\PresenteController;
@@ -62,19 +64,31 @@ Route::middleware(['jwt.cookie', 'auth:api', 'noivo'])->group(function () {
     Route::put('/presentes/{presente}', [PresenteController::class, 'update'])->name('presentes.update');
     Route::delete('/presentes/{presente}', [PresenteController::class, 'destroy'])->name('presentes.destroy');
 
-    Route::get('/contribuicoes', [ContribuicaoController::class, 'index'])->name('contribuicoes.index');
+    // Pedidos dos convidados (Quem presenteou) e o que é manual: confirmar Pix, cancelar, marcar como recebido
+    Route::get('/pedidos', [PedidoAdminController::class, 'index'])->name('pedidos.index');
+    Route::post('/pedidos/{pedido}/confirmar', [PedidoAdminController::class, 'confirmar'])->name('pedidos.confirmar');
+    Route::post('/pedidos/{pedido}/cancelar', [PedidoAdminController::class, 'cancelar'])->name('pedidos.cancelar');
+    Route::post('/pedidos/{pedido}/entregar', [PedidoAdminController::class, 'entregar'])->name('pedidos.entregar');
 });
 
 // ---------- Público de novo: lista de presentes (por último, de propósito) ----------
 // O Laravel casa as rotas na ordem. Se /presentes/{presente} viesse antes de
 // /presentes/create, a palavra "create" seria tratada como o id de um presente.
 Route::get('/presentes', [PresenteController::class, 'index'])->name('presentes.index');
-Route::post('/presentes/{presente}/contribuir', [ContribuicaoController::class, 'store'])
-    ->middleware('throttle:rsvp')->name('presentes.contribuir');
+
+// "Minha lista": o convidado junta presentes e depois escolhe UMA forma de enviar todos
+Route::get('/carrinho', [CarrinhoController::class, 'mostrar'])->name('carrinho.mostrar');
+Route::post('/carrinho/adicionar/{presente}', [CarrinhoController::class, 'adicionar'])
+    ->middleware('throttle:rsvp')->name('carrinho.adicionar');
+Route::delete('/carrinho/{presente}', [CarrinhoController::class, 'remover'])->name('carrinho.remover');
+
+Route::post('/pedido', [PedidoController::class, 'store'])->middleware('throttle:rsvp')->name('pedido.store');
+// Duas portas para a mesma página: a do convidado (Pix, comprar) e a de retorno do Stripe.
+Route::get('/pedido/{token}', [PedidoController::class, 'mostrar'])->name('pedido.mostrar');
 
 // ---------- Pagamento (Stripe) ----------
 // Retorno do Checkout. O {token} é um UUID aleatório: identifica a compra sem expor o id.
-Route::get('/pagamento/sucesso/{token}', [PagamentoController::class, 'sucesso'])->name('pagamento.sucesso');
+Route::get('/pagamento/sucesso/{token}', [PedidoController::class, 'mostrar'])->name('pagamento.sucesso');
 Route::get('/pagamento/cancelado/{token}', [PagamentoController::class, 'cancelado'])->name('pagamento.cancelado');
 
 // Quem chama é o servidor do Stripe (sem navegador, sem cookie, sem CSRF).

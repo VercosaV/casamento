@@ -59,4 +59,13 @@ class AmbienteTest extends TestCase
             ->expectsOutputToContain('1 noivo(s) cadastrado(s)')
             ->assertSuccessful();
     }
+
+    public function test_verificar_avisa_quando_faltam_pix_e_endereco_de_entrega(): void
+    {
+        config(['jwt.secret' => 'x', 'casamento.pix.chave' => null, 'casamento.entrega.endereco' => null]);
+
+        $this->artisan('casamento:verificar')
+            ->expectsOutputToContain('PIX_CHAVE vazia')
+            ->expectsOutputToContain('ENDERECO_ENTREGA vazio');
+    }
 }

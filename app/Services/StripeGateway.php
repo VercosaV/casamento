@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\Contribuicao;
+use App\Models\Pedido;
 use Stripe\Checkout\Session;
 use Stripe\Event;
 use Stripe\StripeClient;
@@ -20,43 +20,49 @@ class StripeGateway
         return $this->cliente ??= new StripeClient(config('stripe.sk'));
     }
 
-    /** Cria a página de pagamento (Checkout) no Stripe para esta contribuição. */
-    public function criarCheckout(Contribuicao $contribuicao): Session
+    /** Cria a página de pagamento (Checkout) no Stripe para este pedido: uma linha por presente. */
+    public function criarCheckout(Pedido $pedido): Session
     {
-        $presente = $contribuicao->presente;
+        // loadMissing: usa o que já veio carregado e só consulta o banco o que faltar.
+        $pedido->loadMissing('itens.presente', 'convidado');
+
+        $linhas = $pedido->itens->map(fn ($item) => [
+            'quantity' => $item->quantidade_cotas,
+            'price_data' => [
+                'currency' => 'brl',
+                // Tudo calculado AQUI no servidor, a partir do banco. Nunca do formulário.
+                'unit_amount' => intdiv($item->valor_centavos, $item->quantidade_cotas),
+                'product_data' => [
+                    'name' => $item->presente->cotas_total > 1 ? $item->presente->nome.' (cota)' : $item->presente->nome,
+                ],
+            ],
+        ])->all();
 
         $parametros = [
             'mode' => 'payment',
-            'line_items' => [[
-                'quantity' => $contribuicao->quantidade_cotas,
-                'price_data' => [
-                    'currency' => 'brl',
-                    // Tudo calculado AQUI no servidor, a partir do banco. Nunca do formulário.
-                    'unit_amount' => intdiv($contribuicao->valor_centavos, $contribuicao->quantidade_cotas),
-                    'product_data' => [
-                        'name' => $presente->cotas_total > 1 ? $presente->nome.' (cota)' : $presente->nome,
-                    ],
-                ],
-            ]],
-            // Amarram o pagamento à nossa contribuição: é assim que o webhook sabe de quem é.
-            'client_reference_id' => (string) $contribuicao->id,
-            'metadata' => ['contribuicao_id' => (string) $contribuicao->id],
-            'payment_intent_data' => ['metadata' => ['contribuicao_id' => (string) $contribuicao->id]],
-            'expires_at' => $contribuicao->expira_em->timestamp,
+            'line_items' => $linhas,
+            // Amarram o pagamento ao NOSSO pedido: é assim que o webhook sabe de quem é.
+            'client_reference_id' => (string) $pedido->id,
+            'metadata' => ['pedido_id' => (string) $pedido->id, 'codigo' => $pedido->codigo],
+            'payment_intent_data' => [
+                'description' => 'Presentes de casamento (pedido '.$pedido->codigo.')',
+                'metadata' => ['pedido_id' => (string) $pedido->id, 'codigo' => $pedido->codigo],
+            ],
+            'expires_at' => $pedido->expira_em->timestamp,
             'locale' => 'pt-BR',
-            'success_url' => route('pagamento.sucesso', $contribuicao->token),
-            'cancel_url' => route('pagamento.cancelado', $contribuicao->token),
+            'success_url' => route('pagamento.sucesso', $pedido->token),
+            'cancel_url' => route('pagamento.cancelado', $pedido->token),
         ];
 
         // Só envia o e-mail se existir. O SDK transforma null em "customer_email=" (vazio),
         // e o Stripe pode recusar a sessão por e-mail inválido.
-        if (filled($contribuicao->convidado?->email)) {
-            $parametros['customer_email'] = $contribuicao->convidado->email;
+        if (filled($pedido->convidado?->email)) {
+            $parametros['customer_email'] = $pedido->convidado->email;
         }
 
         return $this->cliente()->checkout->sessions->create($parametros, [
             // Se a requisição for repetida (queda de rede, duplo clique), o Stripe devolve a MESMA sessão.
-            'idempotency_key' => 'contribuicao-'.$contribuicao->id,
+            'idempotency_key' => 'pedido-'.$pedido->id,
         ]);
     }
 

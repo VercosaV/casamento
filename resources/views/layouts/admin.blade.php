@@ -21,7 +21,7 @@
             ['secoes.index', 'Página do convite', 'secoes.*'],
             ['presentes.admin', 'Presentes', 'presentes.*'],
             ['convidados.index', 'Convidados', 'convidados.*'],
-            ['contribuicoes.index', 'Quem presenteou', 'contribuicoes.*'],
+            ['pedidos.index', 'Quem presenteou', 'pedidos.*'],
             ['perfil.edit', 'Meu perfil', 'perfil.*'],
         ];
     @endphp

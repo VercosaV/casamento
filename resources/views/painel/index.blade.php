@@ -15,8 +15,8 @@
         ['Presentes com escolha', $stats['presentes']],
         ['Cotas escolhidas', $stats['cotas']],
         ['Valor recebido (pago)', 'R$ ' . number_format($stats['recebido'], 2, ',', '.')],
-        ['Aguardando pagamento', $stats['aguardando']],
-        ['Reservado sem pagamento', 'R$ ' . number_format($stats['reservado'], 2, ',', '.')],
+        ['Aguardando o dinheiro (Stripe ou Pix)', $stats['aguardando']],
+        ['Presentes comprados, para receber', $stats['para_receber']],
     ];
 @endphp
 <div class="py-2">
@@ -53,7 +53,7 @@
                     <td>{{ $c->presente->nome }}</td>
                     <td>{{ $c->convidado->nome ?? 'Convidado removido' }}</td>
                     <td>{{ $c->quantidade_cotas }}</td>
-                    <td>{{ $c->mensagem }}</td>
+                    <td>{{ $c->pedido->mensagem ?? $c->mensagem }}</td>
                 </tr>
             @empty
                 <tr><td colspan="5">Nenhuma escolha ainda.</td></tr>
