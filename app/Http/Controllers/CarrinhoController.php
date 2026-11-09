@@ -33,25 +33,32 @@ class CarrinhoController extends Controller
         $total = $linhas->sum('valor_centavos');
         $temIndisponivel = $linhas->contains('indisponivel', true);
 
-        // Cada forma só aparece habilitada quando faz sentido para ESTA lista.
+        // Cada forma só fica habilitada quando faz sentido para ESTA lista.
+        // 'motivo' é o que o CONVIDADO lê. 'dica' é o que falta configurar: só aparece com APP_DEBUG ligado
+        // (no seu computador), para um visitante não ver detalhes do seu servidor.
         $formas = [
             'comprar' => [
                 'ativa' => $linhas->isNotEmpty() && $linhas->every(fn ($l) => $l['presente']->cotas_total === 1),
                 'motivo' => 'Disponível só para presentes inteiros (sem cotas). Para cotas, use uma das outras formas.',
+                'dica' => 'Tire da lista os presentes que têm cotas, ou escolha um presente inteiro.',
             ],
             'stripe' => [
                 'ativa' => config('stripe.habilitado') && $total >= config('stripe.valor_minimo_centavos'),
                 'motivo' => config('stripe.habilitado')
                     ? 'O valor mínimo para pagar online é R$ '.number_format(config('stripe.valor_minimo_centavos') / 100, 2, ',', '.').'.'
-                    : 'O pagamento online ainda não está disponível.',
+                    : 'Indisponível no momento.',
+                'dica' => config('stripe.habilitado') ? null : 'Falta STRIPE_SK no .env (depois: php artisan config:clear).',
             ],
             'pix' => [
                 'ativa' => filled(config('casamento.pix.chave')),
-                'motivo' => 'A chave Pix dos noivos ainda não foi cadastrada.',
+                'motivo' => 'Indisponível no momento.',
+                'dica' => 'Falta PIX_CHAVE no .env (e PIX_BENEFICIARIO entre aspas). Depois: php artisan config:clear.',
             ],
         ];
 
-        return view('carrinho.mostrar', compact('linhas', 'total', 'formas', 'temIndisponivel'));
+        $nenhumaForma = collect($formas)->doesntContain('ativa', true);
+
+        return view('carrinho.mostrar', compact('linhas', 'total', 'formas', 'temIndisponivel', 'nenhumaForma'));
     }
 
     public function adicionar(Request $request, Presente $presente)

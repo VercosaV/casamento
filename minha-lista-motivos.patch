@@ -1,0 +1,178 @@
+diff --git a/app/Console/Commands/ApagarDadosConvidados.php b/app/Console/Commands/ApagarDadosConvidados.php
+index d0a4a79..6dd62dc 100644
+--- a/app/Console/Commands/ApagarDadosConvidados.php
++++ b/app/Console/Commands/ApagarDadosConvidados.php
+@@ -15,12 +15,15 @@ class ApagarDadosConvidados extends Command
+     public function handle(): int
+     {
+         if (! $this->option('confirmo')
+-            && ! $this->confirm('Isso apaga TODOS os convidados, escolhas e recados. Continuar?')) {
++            && ! $this->confirm('Isso apaga TODOS os convidados, pedidos de presentes (com as mensagens) e recados. Exporte antes o que quiser guardar. Continuar?')) {
+             return self::FAILURE;
+         }
+ 
+         DB::transaction(function () {
+             DB::table('contribuicoes')->delete();
++            // Os pedidos guardam mensagem, código do Pix e ids do Stripe: também são dados pessoais.
++            // (O histórico dos pagamentos continua no painel do Stripe, que é outro sistema.)
++            DB::table('pedidos')->delete();
+             // A tabela recados só existe se você fez o mural (passo 6.1).
+             if (Schema::hasTable('recados')) {
+                 DB::table('recados')->delete();
+diff --git a/app/Http/Controllers/CarrinhoController.php b/app/Http/Controllers/CarrinhoController.php
+index 8559a18..2ce4028 100644
+--- a/app/Http/Controllers/CarrinhoController.php
++++ b/app/Http/Controllers/CarrinhoController.php
+@@ -33,25 +33,32 @@ public function mostrar()
+         $total = $linhas->sum('valor_centavos');
+         $temIndisponivel = $linhas->contains('indisponivel', true);
+ 
+-        // Cada forma só aparece habilitada quando faz sentido para ESTA lista.
++        // Cada forma só fica habilitada quando faz sentido para ESTA lista.
++        // 'motivo' é o que o CONVIDADO lê. 'dica' é o que falta configurar: só aparece com APP_DEBUG ligado
++        // (no seu computador), para um visitante não ver detalhes do seu servidor.
+         $formas = [
+             'comprar' => [
+                 'ativa' => $linhas->isNotEmpty() && $linhas->every(fn ($l) => $l['presente']->cotas_total === 1),
+                 'motivo' => 'Disponível só para presentes inteiros (sem cotas). Para cotas, use uma das outras formas.',
++                'dica' => 'Tire da lista os presentes que têm cotas, ou escolha um presente inteiro.',
+             ],
+             'stripe' => [
+                 'ativa' => config('stripe.habilitado') && $total >= config('stripe.valor_minimo_centavos'),
+                 'motivo' => config('stripe.habilitado')
+                     ? 'O valor mínimo para pagar online é R$ '.number_format(config('stripe.valor_minimo_centavos') / 100, 2, ',', '.').'.'
+-                    : 'O pagamento online ainda não está disponível.',
++                    : 'Indisponível no momento.',
++                'dica' => config('stripe.habilitado') ? null : 'Falta STRIPE_SK no .env (depois: php artisan config:clear).',
+             ],
+             'pix' => [
+                 'ativa' => filled(config('casamento.pix.chave')),
+-                'motivo' => 'A chave Pix dos noivos ainda não foi cadastrada.',
++                'motivo' => 'Indisponível no momento.',
++                'dica' => 'Falta PIX_CHAVE no .env (e PIX_BENEFICIARIO entre aspas). Depois: php artisan config:clear.',
+             ],
+         ];
+ 
+-        return view('carrinho.mostrar', compact('linhas', 'total', 'formas', 'temIndisponivel'));
++        $nenhumaForma = collect($formas)->doesntContain('ativa', true);
++
++        return view('carrinho.mostrar', compact('linhas', 'total', 'formas', 'temIndisponivel', 'nenhumaForma'));
+     }
+ 
+     public function adicionar(Request $request, Presente $presente)
+diff --git a/resources/views/carrinho/mostrar.blade.php b/resources/views/carrinho/mostrar.blade.php
+index 4a9ebca..e541059 100644
+--- a/resources/views/carrinho/mostrar.blade.php
++++ b/resources/views/carrinho/mostrar.blade.php
+@@ -53,6 +53,17 @@
+                 @csrf
+                 <h2 class="h4 mb-3">Como você quer enviar?</h2>
+ 
++                @if ($nenhumaForma)
++                    <div class="alert alert-warning" role="alert">
++                        <strong>Nenhuma forma de envio está disponível para esta lista agora.</strong>
++                        @if (config('app.debug'))
++                            <div class="small mt-1">Para os noivos: veja o que falta em cada opção abaixo (linhas em vermelho) ou rode <code>php artisan casamento:verificar</code>.</div>
++                        @else
++                            <div class="small mt-1">Tente de novo mais tarde ou fale com os noivos.</div>
++                        @endif
++                    </div>
++                @endif
++
+                 @php
+                     $opcoes = [
+                         'comprar' => ['Comprar o presente', 'Você mesmo compra na loja que preferir e entrega aos noivos. Nós reservamos o presente para ninguém comprar o mesmo.'],
+@@ -70,6 +81,9 @@
+                             <label class="form-check-label" for="forma-{{ $chave }}">
+                                 <strong>{{ $titulo }}</strong>
+                                 <span class="d-block small text-muted">{{ $formas[$chave]['ativa'] ? $texto : $formas[$chave]['motivo'] }}</span>
++                                @if (! $formas[$chave]['ativa'] && $formas[$chave]['dica'] && config('app.debug'))
++                                    <span class="d-block small text-danger">Para você configurar: {{ $formas[$chave]['dica'] }}</span>
++                                @endif
+                             </label>
+                         </div>
+                     </div>
+@@ -93,7 +107,7 @@
+                     <textarea id="mensagem" name="mensagem" class="form-control" rows="2" maxlength="400">{{ old('mensagem') }}</textarea>
+                 </div>
+ 
+-                <button type="submit" class="btn btn-ouro w-100" @disabled($temIndisponivel)>Finalizar</button>
++                <button type="submit" class="btn btn-ouro w-100" @disabled($temIndisponivel || $nenhumaForma)>Finalizar</button>
+                 @if ($temIndisponivel)
+                     <div class="form-text text-center text-danger">Resolva os avisos em vermelho acima para finalizar.</div>
+                 @endif
+diff --git a/tests/Feature/PedidoFluxoTest.php b/tests/Feature/PedidoFluxoTest.php
+index 2c8a4be..211637d 100644
+--- a/tests/Feature/PedidoFluxoTest.php
++++ b/tests/Feature/PedidoFluxoTest.php
+@@ -112,8 +112,8 @@ public function test_sem_chave_pix_a_forma_pix_some(): void
+         $p = Presente::factory()->create(['cotas_total' => 1]);
+         $this->naLista($p);
+ 
+-        $this->get(route('carrinho.mostrar'))->assertSee('A chave Pix dos noivos ainda não foi cadastrada');
+-        $this->finalizar('pix')->assertSessionHas('erro');
++        $this->get(route('carrinho.mostrar'))->assertSee('Indisponível no momento');
++        $this->finalizar('pix')->assertSessionHas('erro', 'A chave Pix dos noivos ainda não foi cadastrada.');
+         $this->assertDatabaseCount('pedidos', 0);
+     }
+ 
+@@ -414,4 +414,59 @@ public function test_pedido_com_token_inexistente_da_404(): void
+     {
+         $this->get(route('pedido.mostrar', (string) Str::uuid()))->assertNotFound();
+     }
++
++    public function test_sem_nenhuma_forma_disponivel_o_botao_finalizar_fica_desabilitado_e_explica(): void
++    {
++        // o caso da tela do Victor: lista com presente em cotas, sem Stripe e sem Pix
++        config(['casamento.pix.chave' => null, 'app.debug' => true]);
++        $cotas = Presente::factory()->create(['cotas_total' => 5, 'valor' => 500]);
++        $this->naLista($cotas, 2);
++
++        $html = $this->get(route('carrinho.mostrar'))->assertOk()
++            ->assertSee('Nenhuma forma de envio está disponível')
++            ->assertSee('Falta PIX_CHAVE no .env')
++            ->assertSee('Falta STRIPE_SK no .env')
++            ->getContent();
++
++        $this->assertMatchesRegularExpression('/<button type="submit" class="btn btn-ouro w-100"[^>]*disabled/s', $html);
++    }
++
++    public function test_para_o_visitante_a_tela_nao_revela_o_que_falta_no_env(): void
++    {
++        config(['casamento.pix.chave' => null, 'app.debug' => false]);
++        $cotas = Presente::factory()->create(['cotas_total' => 5, 'valor' => 500]);
++        $this->naLista($cotas, 2);
++
++        $this->get(route('carrinho.mostrar'))
++            ->assertSee('Nenhuma forma de envio está disponível')
++            ->assertDontSee('PIX_CHAVE')
++            ->assertDontSee('STRIPE_SK')
++            ->assertDontSee('.env');
++    }
++
++    public function test_com_ao_menos_uma_forma_o_botao_finalizar_fica_habilitado(): void
++    {
++        $inteiro = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($inteiro);
++
++        $html = $this->get(route('carrinho.mostrar'))->getContent();
++
++        $this->assertDoesNotMatchRegularExpression('/<button type="submit" class="btn btn-ouro w-100"[^>]*disabled/s', $html);
++    }
++
++    public function test_apagar_dados_depois_do_casamento_apaga_tambem_os_pedidos_e_as_mensagens(): void
++    {
++        $p = Presente::factory()->create(['cotas_total' => 1]);
++        $this->naLista($p);
++        $this->finalizar('pix', ['mensagem' => 'Felicidades, Ana e Bruno!']);
++        $this->assertDatabaseCount('pedidos', 1);
++
++        $this->artisan('casamento:apagar-dados', ['--confirmo' => true])->assertSuccessful();
++
++        $this->assertDatabaseCount('pedidos', 0);
++        $this->assertDatabaseCount('contribuicoes', 0);
++        $this->assertDatabaseCount('convidados', 0);
++        $this->assertDatabaseMissing('pedidos', ['mensagem' => 'Felicidades, Ana e Bruno!']);
++        $this->assertSame(1, Presente::count()); // a lista de presentes em si continua
++    }
+ }

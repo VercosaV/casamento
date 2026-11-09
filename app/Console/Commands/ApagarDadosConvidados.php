@@ -15,12 +15,15 @@ class ApagarDadosConvidados extends Command
     public function handle(): int
     {
         if (! $this->option('confirmo')
-            && ! $this->confirm('Isso apaga TODOS os convidados, escolhas e recados. Continuar?')) {
+            && ! $this->confirm('Isso apaga TODOS os convidados, pedidos de presentes (com as mensagens) e recados. Exporte antes o que quiser guardar. Continuar?')) {
             return self::FAILURE;
         }
 
         DB::transaction(function () {
             DB::table('contribuicoes')->delete();
+            // Os pedidos guardam mensagem, código do Pix e ids do Stripe: também são dados pessoais.
+            // (O histórico dos pagamentos continua no painel do Stripe, que é outro sistema.)
+            DB::table('pedidos')->delete();
             // A tabela recados só existe se você fez o mural (passo 6.1).
             if (Schema::hasTable('recados')) {
                 DB::table('recados')->delete();

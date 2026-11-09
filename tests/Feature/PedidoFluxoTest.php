@@ -112,8 +112,8 @@ class PedidoFluxoTest extends TestCase
         $p = Presente::factory()->create(['cotas_total' => 1]);
         $this->naLista($p);
 
-        $this->get(route('carrinho.mostrar'))->assertSee('A chave Pix dos noivos ainda não foi cadastrada');
-        $this->finalizar('pix')->assertSessionHas('erro');
+        $this->get(route('carrinho.mostrar'))->assertSee('Indisponível no momento');
+        $this->finalizar('pix')->assertSessionHas('erro', 'A chave Pix dos noivos ainda não foi cadastrada.');
         $this->assertDatabaseCount('pedidos', 0);
     }
 
@@ -413,5 +413,60 @@ class PedidoFluxoTest extends TestCase
     public function test_pedido_com_token_inexistente_da_404(): void
     {
         $this->get(route('pedido.mostrar', (string) Str::uuid()))->assertNotFound();
+    }
+
+    public function test_sem_nenhuma_forma_disponivel_o_botao_finalizar_fica_desabilitado_e_explica(): void
+    {
+        // o caso da tela do Victor: lista com presente em cotas, sem Stripe e sem Pix
+        config(['casamento.pix.chave' => null, 'app.debug' => true]);
+        $cotas = Presente::factory()->create(['cotas_total' => 5, 'valor' => 500]);
+        $this->naLista($cotas, 2);
+
+        $html = $this->get(route('carrinho.mostrar'))->assertOk()
+            ->assertSee('Nenhuma forma de envio está disponível')
+            ->assertSee('Falta PIX_CHAVE no .env')
+            ->assertSee('Falta STRIPE_SK no .env')
+            ->getContent();
+
+        $this->assertMatchesRegularExpression('/<button type="submit" class="btn btn-ouro w-100"[^>]*disabled/s', $html);
+    }
+
+    public function test_para_o_visitante_a_tela_nao_revela_o_que_falta_no_env(): void
+    {
+        config(['casamento.pix.chave' => null, 'app.debug' => false]);
+        $cotas = Presente::factory()->create(['cotas_total' => 5, 'valor' => 500]);
+        $this->naLista($cotas, 2);
+
+        $this->get(route('carrinho.mostrar'))
+            ->assertSee('Nenhuma forma de envio está disponível')
+            ->assertDontSee('PIX_CHAVE')
+            ->assertDontSee('STRIPE_SK')
+            ->assertDontSee('.env');
+    }
+
+    public function test_com_ao_menos_uma_forma_o_botao_finalizar_fica_habilitado(): void
+    {
+        $inteiro = Presente::factory()->create(['cotas_total' => 1]);
+        $this->naLista($inteiro);
+
+        $html = $this->get(route('carrinho.mostrar'))->getContent();
+
+        $this->assertDoesNotMatchRegularExpression('/<button type="submit" class="btn btn-ouro w-100"[^>]*disabled/s', $html);
+    }
+
+    public function test_apagar_dados_depois_do_casamento_apaga_tambem_os_pedidos_e_as_mensagens(): void
+    {
+        $p = Presente::factory()->create(['cotas_total' => 1]);
+        $this->naLista($p);
+        $this->finalizar('pix', ['mensagem' => 'Felicidades, Ana e Bruno!']);
+        $this->assertDatabaseCount('pedidos', 1);
+
+        $this->artisan('casamento:apagar-dados', ['--confirmo' => true])->assertSuccessful();
+
+        $this->assertDatabaseCount('pedidos', 0);
+        $this->assertDatabaseCount('contribuicoes', 0);
+        $this->assertDatabaseCount('convidados', 0);
+        $this->assertDatabaseMissing('pedidos', ['mensagem' => 'Felicidades, Ana e Bruno!']);
+        $this->assertSame(1, Presente::count()); // a lista de presentes em si continua
     }
 }

@@ -53,6 +53,17 @@
                 @csrf
                 <h2 class="h4 mb-3">Como você quer enviar?</h2>
 
+                @if ($nenhumaForma)
+                    <div class="alert alert-warning" role="alert">
+                        <strong>Nenhuma forma de envio está disponível para esta lista agora.</strong>
+                        @if (config('app.debug'))
+                            <div class="small mt-1">Para os noivos: veja o que falta em cada opção abaixo (linhas em vermelho) ou rode <code>php artisan casamento:verificar</code>.</div>
+                        @else
+                            <div class="small mt-1">Tente de novo mais tarde ou fale com os noivos.</div>
+                        @endif
+                    </div>
+                @endif
+
                 @php
                     $opcoes = [
                         'comprar' => ['Comprar o presente', 'Você mesmo compra na loja que preferir e entrega aos noivos. Nós reservamos o presente para ninguém comprar o mesmo.'],
@@ -70,6 +81,9 @@
                             <label class="form-check-label" for="forma-{{ $chave }}">
                                 <strong>{{ $titulo }}</strong>
                                 <span class="d-block small text-muted">{{ $formas[$chave]['ativa'] ? $texto : $formas[$chave]['motivo'] }}</span>
+                                @if (! $formas[$chave]['ativa'] && $formas[$chave]['dica'] && config('app.debug'))
+                                    <span class="d-block small text-danger">Para você configurar: {{ $formas[$chave]['dica'] }}</span>
+                                @endif
                             </label>
                         </div>
                     </div>
@@ -93,7 +107,7 @@
                     <textarea id="mensagem" name="mensagem" class="form-control" rows="2" maxlength="400">{{ old('mensagem') }}</textarea>
                 </div>
 
-                <button type="submit" class="btn btn-ouro w-100" @disabled($temIndisponivel)>Finalizar</button>
+                <button type="submit" class="btn btn-ouro w-100" @disabled($temIndisponivel || $nenhumaForma)>Finalizar</button>
                 @if ($temIndisponivel)
                     <div class="form-text text-center text-danger">Resolva os avisos em vermelho acima para finalizar.</div>
                 @endif
